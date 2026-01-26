@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "CarbonSense AR",
+    "slug": "carbonsense-ar",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0F14"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.carbonsense.ar",
+      "infoPlist": {
+        "NSCameraUsageDescription": "CarbonSense AR needs camera access to scan objects and estimate their carbon footprint."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0F14"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.carbonsense.ar",
+      "permissions": ["android.permission.CAMERA"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "CarbonSense AR needs camera access to scan objects and estimate their carbon footprint."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id-here"
+      }
+    }
+  }
+}
