@@ -15,8 +15,10 @@ import {
   TouchableOpacity,
   StatusBar,
   Modal,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { useCarbon } from '../context/CarbonContext';
 import { TransportScreen } from './TransportScreen';
 import { EnergyScreen } from './EnergyScreen';
@@ -40,21 +42,53 @@ const CATEGORY_INFO: Record<ActivityCategory, { icon: string; color: string; lab
  * Shows daily/weekly carbon activity log grouped by category.
  */
 export function JourneyScreen() {
+  const navigation = useNavigation<any>();
   const { 
     selectedDate,
     setSelectedDate,
     selectedDateLog,
     weeklySummary,
     settings,
+    removeActivity,
   } = useCarbon();
   
   const [viewMode, setViewMode] = useState<ViewMode>('day');
   const [showTransport, setShowTransport] = useState(false);
   const [showEnergy, setShowEnergy] = useState(false);
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   
   const todayString = getDateString();
   const selectedDateString = getDateString(selectedDate);
   const isToday = selectedDateString === todayString;
+  
+  // Navigate to scan screen with food mode
+  const handleAddMeal = () => {
+    navigation.navigate('Scan');
+  };
+  
+  // Handle activity tap to show details
+  const handleActivityPress = (activity: Activity) => {
+    setSelectedActivity(activity);
+  };
+  
+  // Delete activity
+  const handleDeleteActivity = async (activityId: string) => {
+    Alert.alert(
+      'Delete Activity',
+      'Are you sure you want to delete this activity?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await removeActivity(activityId, getDateString(selectedDate));
+            setSelectedActivity(null);
+          },
+        },
+      ]
+    );
+  };
   
   // Get today's date string
   const dateString = selectedDate.toLocaleDateString('en-US', {
@@ -240,7 +274,11 @@ export function JourneyScreen() {
               
               {activitiesByCategory.product.length > 0 ? (
                 activitiesByCategory.product.map((activity) => (
-                  <View key={activity.id} style={styles.activityItem}>
+                  <TouchableOpacity 
+                    key={activity.id} 
+                    style={styles.activityItem}
+                    onPress={() => handleActivityPress(activity)}
+                  >
                     <View style={styles.activityInfo}>
                       <Text style={styles.activityName} numberOfLines={1}>
                         {activity.name}
@@ -252,11 +290,16 @@ export function JourneyScreen() {
                     <Text style={styles.activityCarbon}>
                       {activity.carbonKg.toFixed(1)} kg
                     </Text>
-                  </View>
+                    <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                  </TouchableOpacity>
                 ))
               ) : (
                 <View style={styles.emptyCategory}>
                   <Text style={styles.emptyCategoryText}>No products scanned {isToday ? 'today' : 'this day'}</Text>
+                  <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('Scan')}>
+                    <Ionicons name="scan" size={16} color={Colors.primary} />
+                    <Text style={styles.addButtonText}>Scan Product</Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </View>
@@ -275,7 +318,11 @@ export function JourneyScreen() {
               
               {activitiesByCategory.food.length > 0 ? (
                 activitiesByCategory.food.map((activity) => (
-                  <View key={activity.id} style={styles.activityItem}>
+                  <TouchableOpacity 
+                    key={activity.id} 
+                    style={styles.activityItem}
+                    onPress={() => handleActivityPress(activity)}
+                  >
                     <View style={styles.activityInfo}>
                       <Text style={styles.activityName} numberOfLines={1}>
                         {activity.name}
@@ -287,12 +334,13 @@ export function JourneyScreen() {
                     <Text style={styles.activityCarbon}>
                       {activity.carbonKg.toFixed(1)} kg
                     </Text>
-                  </View>
+                    <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                  </TouchableOpacity>
                 ))
               ) : (
                 <View style={styles.emptyCategory}>
                   <Text style={styles.emptyCategoryText}>No meals logged {isToday ? 'today' : 'this day'}</Text>
-                  <TouchableOpacity style={styles.addButton}>
+                  <TouchableOpacity style={styles.addButton} onPress={handleAddMeal}>
                     <Ionicons name="add" size={16} color={Colors.primary} />
                     <Text style={styles.addButtonText}>Add Meal</Text>
                   </TouchableOpacity>
@@ -318,7 +366,11 @@ export function JourneyScreen() {
               
               {activitiesByCategory.transport.length > 0 ? (
                 activitiesByCategory.transport.slice(0, 3).map((activity) => (
-                  <View key={activity.id} style={styles.activityItem}>
+                  <TouchableOpacity 
+                    key={activity.id} 
+                    style={styles.activityItem}
+                    onPress={() => handleActivityPress(activity)}
+                  >
                     <View style={styles.activityInfo}>
                       <Text style={styles.activityName} numberOfLines={1}>
                         {activity.name}
@@ -330,7 +382,7 @@ export function JourneyScreen() {
                     <Text style={styles.activityCarbon}>
                       {activity.carbonKg.toFixed(1)} kg
                     </Text>
-                  </View>
+                  </TouchableOpacity>
                 ))
               ) : (
                 <View style={styles.emptyCategory}>
@@ -361,7 +413,11 @@ export function JourneyScreen() {
               
               {activitiesByCategory.energy.length > 0 ? (
                 activitiesByCategory.energy.slice(0, 3).map((activity) => (
-                  <View key={activity.id} style={styles.activityItem}>
+                  <TouchableOpacity 
+                    key={activity.id} 
+                    style={styles.activityItem}
+                    onPress={() => handleActivityPress(activity)}
+                  >
                     <View style={styles.activityInfo}>
                       <Text style={styles.activityName} numberOfLines={1}>
                         {activity.name}
@@ -373,7 +429,7 @@ export function JourneyScreen() {
                     <Text style={styles.activityCarbon}>
                       {activity.carbonKg.toFixed(1)} kg
                     </Text>
-                  </View>
+                  </TouchableOpacity>
                 ))
               ) : (
                 <View style={styles.emptyCategory}>
@@ -400,6 +456,114 @@ export function JourneyScreen() {
         )}
       </ScrollView>
       
+      {/* Activity Detail Modal */}
+      <Modal
+        visible={!!selectedActivity}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedActivity(null)}
+      >
+        <View style={styles.detailModalOverlay}>
+          <View style={styles.detailModal}>
+            {selectedActivity && (
+              <>
+                <View style={styles.detailModalHeader}>
+                  <View style={[
+                    styles.detailCategoryIcon,
+                    { backgroundColor: CATEGORY_INFO[selectedActivity.category].color + '20' }
+                  ]}>
+                    <Ionicons 
+                      name={CATEGORY_INFO[selectedActivity.category].icon as any} 
+                      size={32} 
+                      color={CATEGORY_INFO[selectedActivity.category].color} 
+                    />
+                  </View>
+                  <TouchableOpacity 
+                    style={styles.detailCloseButton}
+                    onPress={() => setSelectedActivity(null)}
+                  >
+                    <Ionicons name="close" size={24} color={Colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+                
+                <Text style={styles.detailTitle}>{selectedActivity.name}</Text>
+                <Text style={styles.detailCategory}>
+                  {CATEGORY_INFO[selectedActivity.category].label}
+                </Text>
+                
+                <View style={styles.detailStats}>
+                  <View style={styles.detailStat}>
+                    <Text style={styles.detailStatValue}>
+                      {selectedActivity.carbonKg.toFixed(2)}
+                    </Text>
+                    <Text style={styles.detailStatLabel}>kg CO₂e</Text>
+                  </View>
+                  {selectedActivity.quantity && (
+                    <View style={styles.detailStat}>
+                      <Text style={styles.detailStatValue}>
+                        {selectedActivity.quantity}
+                      </Text>
+                      <Text style={styles.detailStatLabel}>
+                        {selectedActivity.unit || 'units'}
+                      </Text>
+                    </View>
+                  )}
+                  {selectedActivity.ecoScore !== undefined && (
+                    <View style={styles.detailStat}>
+                      <Text style={[
+                        styles.detailStatValue,
+                        { color: selectedActivity.ecoScore >= 70 ? Colors.carbonLow : 
+                                 selectedActivity.ecoScore >= 40 ? Colors.carbonMedium : Colors.carbonHigh }
+                      ]}>
+                        {selectedActivity.ecoScore}
+                      </Text>
+                      <Text style={styles.detailStatLabel}>Eco Score</Text>
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.detailInfo}>
+                  <View style={styles.detailInfoRow}>
+                    <Ionicons name="time-outline" size={16} color={Colors.textSecondary} />
+                    <Text style={styles.detailInfoText}>
+                      {new Date(selectedActivity.timestamp).toLocaleString()}
+                    </Text>
+                  </View>
+                  
+                  {'mode' in selectedActivity && (
+                    <View style={styles.detailInfoRow}>
+                      <Ionicons name="car-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={styles.detailInfoText}>
+                        Mode: {(selectedActivity as any).mode}
+                      </Text>
+                    </View>
+                  )}
+                  
+                  {'distanceKm' in selectedActivity && (
+                    <View style={styles.detailInfoRow}>
+                      <Ionicons name="navigate-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={styles.detailInfoText}>
+                        Distance: {((selectedActivity as any).distanceKm as number).toFixed(1)} km
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.detailActions}>
+                  <TouchableOpacity 
+                    style={styles.detailDeleteButton}
+                    onPress={() => handleDeleteActivity(selectedActivity.id)}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={Colors.carbonHigh} />
+                    <Text style={styles.detailDeleteText}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Transport Modal */}
       <Modal
         visible={showTransport}
@@ -723,6 +887,102 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.xl,
     paddingBottom: Spacing.sm,
+  },
+  
+  // Activity Detail Modal
+  detailModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+  },
+  detailModal: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    width: '100%',
+    maxWidth: 400,
+  },
+  detailModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.md,
+  },
+  detailCategoryIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailCloseButton: {
+    padding: Spacing.xs,
+  },
+  detailTitle: {
+    ...TextStyles.h4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
+  },
+  detailCategory: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xl,
+  },
+  detailStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginBottom: Spacing.xl,
+  },
+  detailStat: {
+    alignItems: 'center',
+  },
+  detailStatValue: {
+    ...TextStyles.h3,
+    color: Colors.textPrimary,
+    fontWeight: '700',
+  },
+  detailStatLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  detailInfo: {
+    marginBottom: Spacing.xl,
+  },
+  detailInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  detailInfoText: {
+    ...TextStyles.body,
+    color: Colors.textSecondary,
+    marginLeft: Spacing.md,
+  },
+  detailActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  detailDeleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.base,
+    borderWidth: 1,
+    borderColor: Colors.carbonHigh,
+  },
+  detailDeleteText: {
+    ...TextStyles.button,
+    color: Colors.carbonHigh,
+    marginLeft: Spacing.xs,
   },
 });
 

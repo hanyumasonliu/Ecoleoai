@@ -24,6 +24,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
+import { useCarbon } from '../context/CarbonContext';
 
 // Storage key
 const STORAGE_KEY = '@greensense_energy_logs';
@@ -91,6 +92,7 @@ const PERIODS = [
  * EnergyScreen Component
  */
 export function EnergyScreen() {
+  const { addEnergyActivity } = useCarbon();
   const [selectedType, setSelectedType] = useState<'electricity' | 'natural_gas' | 'heating_oil'>('electricity');
   const [amount, setAmount] = useState('');
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
@@ -145,7 +147,7 @@ export function EnergyScreen() {
   /**
    * Add new energy log
    */
-  const handleAddLog = () => {
+  const handleAddLog = async () => {
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
       Alert.alert('Invalid Amount', 'Please enter a valid positive number');
@@ -153,6 +155,9 @@ export function EnergyScreen() {
     }
 
     const carbonKg = calculateCarbon(selectedType, amountNum);
+    // For periodic entries, calculate daily equivalent
+    const dailyCarbonKg = period === 'daily' ? carbonKg : 
+                          period === 'weekly' ? carbonKg / 7 : carbonKg / 30;
     const typeInfo = ENERGY_TYPES.find(t => t.type === selectedType)!;
 
     const newLog: EnergyLog = {
@@ -168,12 +173,29 @@ export function EnergyScreen() {
     const newLogs = [newLog, ...logs];
     saveLogs(newLogs);
     
+    // Also save to CarbonContext for Journey display
+    try {
+      await addEnergyActivity({
+        name: `${typeInfo.label} (${period})`,
+        carbonKg: dailyCarbonKg, // Use daily equivalent
+        energyType: selectedType,
+        energyKwh: selectedType === 'electricity' ? amountNum : amountNum * 10, // Convert to kWh equivalent
+        quantity: amountNum,
+        unit: typeInfo.unit,
+        period: period,
+        isEstimated: true,
+        ecoScore: Math.max(0, 100 - Math.round(dailyCarbonKg * 5)),
+      });
+    } catch (error) {
+      console.error('Error adding to carbon context:', error);
+    }
+    
     setAmount('');
     setShowForm(false);
     
     Alert.alert(
       '✅ Energy Logged',
-      `${amountNum} ${typeInfo.unit} of ${typeInfo.label.toLowerCase()} = ${carbonKg.toFixed(2)} kg CO₂e`
+      `${amountNum} ${typeInfo.unit} of ${typeInfo.label.toLowerCase()} = ${carbonKg.toFixed(2)} kg CO₂e total (${dailyCarbonKg.toFixed(2)} kg/day)`
     );
   };
 

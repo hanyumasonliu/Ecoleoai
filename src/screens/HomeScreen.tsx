@@ -5,7 +5,7 @@
  * and recent activity. Shows data for the selected date.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -15,11 +15,15 @@ import {
   TouchableOpacity,
   StatusBar,
   Dimensions,
+  Modal,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { useCarbon } from '../context/CarbonContext';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
 import { getDateString } from '../services/dataLayer';
+import { Activity, ActivityCategory } from '../types/activity';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -54,6 +58,7 @@ const getWeekDates = () => {
  * Main dashboard with carbon budget and activity overview.
  */
 export function HomeScreen() {
+  const navigation = useNavigation<any>();
   const { 
     selectedDate,
     setSelectedDate,
@@ -65,13 +70,40 @@ export function HomeScreen() {
     getScansForSelectedDate,
     settings,
     weeklySummary,
+    removeActivity,
   } = useCarbon();
+  
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   
   const weekDates = getWeekDates();
   const today = new Date();
   const todayString = getDateString(today);
   const selectedDateString = getDateString(selectedDate);
   const isToday = selectedDateString === todayString;
+  
+  // Handle activity tap
+  const handleActivityPress = (activity: Activity) => {
+    setSelectedActivity(activity);
+  };
+  
+  // Handle delete activity
+  const handleDeleteActivity = async (activityId: string) => {
+    Alert.alert(
+      'Delete Activity',
+      'Are you sure you want to delete this activity?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await removeActivity(activityId, getDateString(selectedDate));
+            setSelectedActivity(null);
+          },
+        },
+      ]
+    );
+  };
   
   const dailyBudget = settings.goals.dailyBudgetKg;
   const usedCarbon = selectedDateLog.totalCarbonKg;
@@ -260,7 +292,12 @@ export function HomeScreen() {
           
           {selectedDateActivities.length > 0 ? (
             selectedDateActivities.slice(0, 5).map((activity) => (
-              <View key={activity.id} style={styles.activityCard}>
+              <TouchableOpacity 
+                key={activity.id} 
+                style={styles.activityCard}
+                onPress={() => handleActivityPress(activity)}
+                activeOpacity={0.7}
+              >
                 <View style={[
                   styles.activityThumbnail,
                   { backgroundColor: getCategoryColor(activity.category) + '20' }
@@ -287,13 +324,16 @@ export function HomeScreen() {
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.activityTime}>
-                  {new Date(activity.timestamp).toLocaleTimeString('en-US', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })}
-                </Text>
-              </View>
+                <View style={styles.activityRight}>
+                  <Text style={styles.activityTime}>
+                    {new Date(activity.timestamp).toLocaleTimeString('en-US', {
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                </View>
+              </TouchableOpacity>
             ))
           ) : (
             <View style={styles.emptyActivity}>
@@ -305,6 +345,114 @@ export function HomeScreen() {
           )}
         </View>
       </ScrollView>
+      
+      {/* Activity Detail Modal */}
+      <Modal
+        visible={!!selectedActivity}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedActivity(null)}
+      >
+        <View style={styles.detailModalOverlay}>
+          <View style={styles.detailModal}>
+            {selectedActivity && (
+              <>
+                <View style={styles.detailModalHeader}>
+                  <View style={[
+                    styles.detailCategoryIcon,
+                    { backgroundColor: getCategoryColor(selectedActivity.category) + '20' }
+                  ]}>
+                    <Ionicons 
+                      name={getCategoryIcon(selectedActivity.category)} 
+                      size={32} 
+                      color={getCategoryColor(selectedActivity.category)} 
+                    />
+                  </View>
+                  <TouchableOpacity 
+                    style={styles.detailCloseButton}
+                    onPress={() => setSelectedActivity(null)}
+                  >
+                    <Ionicons name="close" size={24} color={Colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+                
+                <Text style={styles.detailTitle}>{selectedActivity.name}</Text>
+                <Text style={styles.detailCategory}>
+                  {selectedActivity.category.charAt(0).toUpperCase() + selectedActivity.category.slice(1)}
+                </Text>
+                
+                <View style={styles.detailStats}>
+                  <View style={styles.detailStat}>
+                    <Text style={styles.detailStatValue}>
+                      {selectedActivity.carbonKg.toFixed(2)}
+                    </Text>
+                    <Text style={styles.detailStatLabel}>kg CO₂e</Text>
+                  </View>
+                  {selectedActivity.quantity && (
+                    <View style={styles.detailStat}>
+                      <Text style={styles.detailStatValue}>
+                        {selectedActivity.quantity}
+                      </Text>
+                      <Text style={styles.detailStatLabel}>
+                        {selectedActivity.unit || 'units'}
+                      </Text>
+                    </View>
+                  )}
+                  {selectedActivity.ecoScore !== undefined && (
+                    <View style={styles.detailStat}>
+                      <Text style={[
+                        styles.detailStatValue,
+                        { color: selectedActivity.ecoScore >= 70 ? Colors.carbonLow : 
+                                 selectedActivity.ecoScore >= 40 ? Colors.carbonMedium : Colors.carbonHigh }
+                      ]}>
+                        {selectedActivity.ecoScore}
+                      </Text>
+                      <Text style={styles.detailStatLabel}>Eco Score</Text>
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.detailInfo}>
+                  <View style={styles.detailInfoRow}>
+                    <Ionicons name="time-outline" size={16} color={Colors.textSecondary} />
+                    <Text style={styles.detailInfoText}>
+                      {new Date(selectedActivity.timestamp).toLocaleString()}
+                    </Text>
+                  </View>
+                  
+                  {'mode' in selectedActivity && (
+                    <View style={styles.detailInfoRow}>
+                      <Ionicons name="car-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={styles.detailInfoText}>
+                        Mode: {(selectedActivity as any).mode}
+                      </Text>
+                    </View>
+                  )}
+                  
+                  {'distanceKm' in selectedActivity && (
+                    <View style={styles.detailInfoRow}>
+                      <Ionicons name="navigate-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={styles.detailInfoText}>
+                        Distance: {((selectedActivity as any).distanceKm as number).toFixed(1)} km
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.detailActions}>
+                  <TouchableOpacity 
+                    style={styles.detailDeleteButton}
+                    onPress={() => handleDeleteActivity(selectedActivity.id)}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={Colors.carbonHigh} />
+                    <Text style={styles.detailDeleteText}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -616,6 +764,9 @@ const styles = StyleSheet.create({
     ...TextStyles.caption,
     color: Colors.textTertiary,
   },
+  activityRight: {
+    alignItems: 'flex-end',
+  },
   emptyActivity: {
     alignItems: 'center',
     paddingVertical: Spacing['2xl'],
@@ -625,6 +776,102 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     marginTop: Spacing.sm,
     textAlign: 'center',
+  },
+  
+  // Activity Detail Modal
+  detailModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+  },
+  detailModal: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    width: '100%',
+    maxWidth: 400,
+  },
+  detailModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.md,
+  },
+  detailCategoryIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailCloseButton: {
+    padding: Spacing.xs,
+  },
+  detailTitle: {
+    ...TextStyles.h4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
+  },
+  detailCategory: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xl,
+  },
+  detailStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginBottom: Spacing.xl,
+  },
+  detailStat: {
+    alignItems: 'center',
+  },
+  detailStatValue: {
+    ...TextStyles.h3,
+    color: Colors.textPrimary,
+    fontWeight: '700',
+  },
+  detailStatLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  detailInfo: {
+    marginBottom: Spacing.xl,
+  },
+  detailInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  detailInfoText: {
+    ...TextStyles.body,
+    color: Colors.textSecondary,
+    marginLeft: Spacing.md,
+  },
+  detailActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  detailDeleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.base,
+    borderWidth: 1,
+    borderColor: Colors.carbonHigh,
+  },
+  detailDeleteText: {
+    ...TextStyles.button,
+    color: Colors.carbonHigh,
+    marginLeft: Spacing.xs,
   },
 });
 
