@@ -71,6 +71,8 @@ export function HomeScreen() {
     settings,
     weeklySummary,
     removeActivity,
+    energyBaselines,
+    selectedDateTotalWithBaseline,
   } = useCarbon();
   
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
@@ -107,9 +109,11 @@ export function HomeScreen() {
   
   const dailyBudget = settings.goals.dailyBudgetKg;
   const usedCarbon = selectedDateLog.totalCarbonKg;
-  const remainingCarbon = selectedDateRemainingBudget;
-  const isOverBudget = selectedDateIsOverBudget;
-  const budgetProgress = selectedDateBudgetProgress;
+  const baselineCarbon = energyBaselines.totalDailyCarbonKg;
+  const totalWithBaseline = selectedDateTotalWithBaseline;
+  const remainingCarbon = Math.max(0, dailyBudget - totalWithBaseline);
+  const isOverBudget = totalWithBaseline > dailyBudget;
+  const budgetProgress = dailyBudget > 0 ? Math.min(totalWithBaseline / dailyBudget, 1) : 0;
   
   // Get activities for selected date
   const selectedDateActivities = selectedDateLog.activities;
@@ -194,7 +198,7 @@ export function HomeScreen() {
           <View style={styles.budgetContent}>
             <View style={styles.budgetText}>
               <Text style={[styles.budgetValue, isOverBudget && styles.budgetOverValue]}>
-                {isOverBudget ? usedCarbon.toFixed(0) : remainingCarbon.toFixed(1)}
+                {isOverBudget ? (totalWithBaseline - dailyBudget).toFixed(1) : remainingCarbon.toFixed(1)}
               </Text>
               <Text style={[styles.budgetLabel, isOverBudget && styles.budgetOverLabel]}>
                 {isOverBudget ? 'kg over budget' : 'kg CO₂e left'}
@@ -221,6 +225,26 @@ export function HomeScreen() {
                   />
                 </View>
               </View>
+            </View>
+          </View>
+          
+          {/* Budget breakdown with baseline */}
+          <View style={styles.budgetBreakdown}>
+            <View style={styles.breakdownRow}>
+              <Text style={styles.breakdownLabel}>Activities:</Text>
+              <Text style={styles.breakdownValue}>{usedCarbon.toFixed(1)} kg</Text>
+            </View>
+            {baselineCarbon > 0 && (
+              <View style={styles.breakdownRow}>
+                <Text style={styles.breakdownLabel}>🏠 Home baseline:</Text>
+                <Text style={styles.breakdownValue}>{baselineCarbon.toFixed(1)} kg</Text>
+              </View>
+            )}
+            <View style={[styles.breakdownRow, styles.breakdownTotal]}>
+              <Text style={styles.breakdownTotalLabel}>Total:</Text>
+              <Text style={[styles.breakdownTotalValue, isOverBudget && styles.breakdownOverValue]}>
+                {totalWithBaseline.toFixed(1)} kg
+              </Text>
             </View>
           </View>
           
@@ -637,6 +661,46 @@ const styles = StyleSheet.create({
     ...TextStyles.caption,
     color: Colors.textTertiary,
     marginLeft: Spacing.xs,
+  },
+  budgetBreakdown: {
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  breakdownLabel: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+  },
+  breakdownValue: {
+    ...TextStyles.bodySmall,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  breakdownTotal: {
+    marginTop: Spacing.xs,
+    paddingTop: Spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  breakdownTotalLabel: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '600',
+  },
+  breakdownTotalValue: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '700',
+  },
+  breakdownOverValue: {
+    color: Colors.carbonHigh,
   },
   
   // Category grid

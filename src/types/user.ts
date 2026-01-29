@@ -23,6 +23,64 @@ export interface NotificationSettings {
 }
 
 /**
+ * Energy baseline entry (from utility bill)
+ */
+export interface EnergyBaseline {
+  /** Whether this baseline is enabled/active */
+  enabled: boolean;
+  /** Monthly amount from bill */
+  monthlyAmount: number;
+  /** Unit of measurement */
+  unit: string;
+  /** Daily average (calculated) */
+  dailyAverage: number;
+  /** Daily carbon in kg CO₂e */
+  dailyCarbonKg: number;
+  /** Last updated date */
+  lastUpdated: string;
+  /** Bill period start (optional) */
+  billPeriodStart?: string;
+  /** Bill period end (optional) */
+  billPeriodEnd?: string;
+}
+
+/**
+ * Combined energy baselines
+ */
+export interface EnergyBaselines {
+  /** Electricity baseline */
+  electricity: EnergyBaseline;
+  /** Natural gas baseline */
+  naturalGas: EnergyBaseline;
+  /** Heating oil baseline */
+  heatingOil: EnergyBaseline;
+  /** Total daily baseline carbon */
+  totalDailyCarbonKg: number;
+}
+
+/**
+ * Default energy baseline (disabled)
+ */
+export const DEFAULT_ENERGY_BASELINE: EnergyBaseline = {
+  enabled: false,
+  monthlyAmount: 0,
+  unit: '',
+  dailyAverage: 0,
+  dailyCarbonKg: 0,
+  lastUpdated: new Date().toISOString(),
+};
+
+/**
+ * Default energy baselines
+ */
+export const DEFAULT_ENERGY_BASELINES: EnergyBaselines = {
+  electricity: { ...DEFAULT_ENERGY_BASELINE, unit: 'kWh' },
+  naturalGas: { ...DEFAULT_ENERGY_BASELINE, unit: 'm³' },
+  heatingOil: { ...DEFAULT_ENERGY_BASELINE, unit: 'liters' },
+  totalDailyCarbonKg: 0,
+};
+
+/**
  * User's home energy setup
  */
 export interface HomeEnergySettings {
@@ -34,12 +92,14 @@ export interface HomeEnergySettings {
   occupants: number;
   /** Primary heating source */
   heatingSource: 'electricity' | 'natural_gas' | 'heating_oil' | 'heat_pump' | 'solar';
-  /** Estimated monthly electricity (kWh) */
+  /** Estimated monthly electricity (kWh) - DEPRECATED: use baselines instead */
   monthlyElectricityKwh: number;
   /** Has solar panels */
   hasSolar: boolean;
   /** Region/grid for emission factors */
   gridRegion?: string;
+  /** Energy baselines from utility bills */
+  baselines: EnergyBaselines;
 }
 
 /**
@@ -255,6 +315,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     heatingSource: 'natural_gas',
     monthlyElectricityKwh: 500,
     hasSolar: false,
+    baselines: DEFAULT_ENERGY_BASELINES,
   },
   transport: {
     defaultCommuteMode: 'car',

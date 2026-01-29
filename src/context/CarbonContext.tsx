@@ -27,6 +27,9 @@ import {
 import {
   UserSettings,
   DEFAULT_USER_SETTINGS,
+  EnergyBaselines,
+  EnergyBaseline,
+  DEFAULT_ENERGY_BASELINES,
 } from '../types/user';
 import { AnalyzedObject, ScanRecord } from '../types/carbon';
 import {
@@ -86,6 +89,18 @@ interface CarbonContextType {
   
   // Weekly data
   weeklySummary: WeeklySummary | null;
+  
+  // Energy baseline (from utility bills)
+  energyBaselines: EnergyBaselines;
+  updateEnergyBaseline: (
+    type: 'electricity' | 'naturalGas' | 'heatingOil',
+    monthlyAmount: number,
+    daysInPeriod?: number
+  ) => Promise<void>;
+  
+  // Total daily carbon including baseline
+  totalDailyWithBaseline: number;
+  selectedDateTotalWithBaseline: number;
   
   // Loading state
   isLoading: boolean;
@@ -150,6 +165,10 @@ const defaultContext: CarbonContextType = {
   selectedDateBudgetProgress: 0,
   selectedDateCategoryTotals: { food: 0, transport: 0, product: 0, energy: 0 },
   weeklySummary: null,
+  energyBaselines: DEFAULT_ENERGY_BASELINES,
+  updateEnergyBaseline: async () => {},
+  totalDailyWithBaseline: 0,
+  selectedDateTotalWithBaseline: 0,
   isLoading: true,
   refresh: async () => {},
 };
@@ -527,6 +546,70 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
   const selectedDateIsOverBudget = selectedDateLog.totalCarbonKg > selectedDateLog.budgetKg;
   const selectedDateBudgetProgress = selectedDateLog.budgetKg > 0 ? Math.min(selectedDateLog.totalCarbonKg / selectedDateLog.budgetKg, 1) : 0;
 
+  /**
+   * Energy baselines from settings
+   */
+  const energyBaselines = settings.homeEnergy.baselines;
+
+  /**
+   * Total daily carbon including baseline
+   */
+  const totalDailyWithBaseline = todayLog.totalCarbonKg + energyBaselines.totalDailyCarbonKg;
+  const selectedDateTotalWithBaseline = selectedDateLog.totalCarbonKg + energyBaselines.totalDailyCarbonKg;
+
+  /**
+   * Emission factors for baseline calculation
+   */
+  const BASELINE_EMISSION_FACTORS = {
+    electricity: 0.4, // kg CO₂e per kWh
+    naturalGas: 2.0, // kg CO₂e per m³
+    heatingOil: 2.68, // kg CO₂e per liter
+  };
+
+  /**
+   * Update energy baseline from utility bill
+   */
+  const updateEnergyBaseline = useCallback(async (
+    type: 'electricity' | 'naturalGas' | 'heatingOil',
+    monthlyAmount: number,
+    daysInPeriod: number = 30
+  ) => {
+    const dailyAverage = monthlyAmount / daysInPeriod;
+    const dailyCarbonKg = dailyAverage * BASELINE_EMISSION_FACTORS[type];
+
+    const updatedBaseline: EnergyBaseline = {
+      enabled: monthlyAmount > 0,
+      monthlyAmount,
+      unit: type === 'electricity' ? 'kWh' : type === 'naturalGas' ? 'm³' : 'liters',
+      dailyAverage,
+      dailyCarbonKg,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    const newBaselines: EnergyBaselines = {
+      ...settings.homeEnergy.baselines,
+      [type]: updatedBaseline,
+      totalDailyCarbonKg: 0, // Will be recalculated
+    };
+
+    // Recalculate total
+    newBaselines.totalDailyCarbonKg = 
+      (newBaselines.electricity.enabled ? newBaselines.electricity.dailyCarbonKg : 0) +
+      (newBaselines.naturalGas.enabled ? newBaselines.naturalGas.dailyCarbonKg : 0) +
+      (newBaselines.heatingOil.enabled ? newBaselines.heatingOil.dailyCarbonKg : 0);
+
+    const newSettings: UserSettings = {
+      ...settings,
+      homeEnergy: {
+        ...settings.homeEnergy,
+        baselines: newBaselines,
+      },
+    };
+
+    setSettings(newSettings);
+    await saveUserSettings(newSettings);
+  }, [settings]);
+
   const value: CarbonContextType = {
     todayLog,
     selectedDate,
@@ -551,6 +634,10 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
     selectedDateBudgetProgress,
     selectedDateCategoryTotals: selectedDateLog.categoryTotals,
     weeklySummary,
+    energyBaselines,
+    updateEnergyBaseline,
+    totalDailyWithBaseline,
+    selectedDateTotalWithBaseline,
     isLoading,
     refresh: loadData,
   };
