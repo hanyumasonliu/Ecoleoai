@@ -1,11 +1,11 @@
 /**
  * GreenSense AR - Transport Screen
  * 
- * Hybrid automatic transport detection interface.
- * - Start/stop trip tracking
- * - View detected trips
- * - Confirm transport mode
- * - View trip history
+ * GPS-based automatic transport tracking with live map.
+ * - Real-time location tracking on map
+ * - Automatic distance calculation
+ * - Transport mode detection based on speed
+ * - Trip history and carbon tracking
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -22,8 +22,12 @@ import {
   RefreshControl,
   TextInput,
   AppState,
+  Dimensions,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import * as Location from 'expo-location';
 import {
   Trip,
   startTrip,
@@ -38,6 +42,8 @@ import {
   hasLocationPermissions,
   calculateTripCarbon,
   detectTransportMode,
+  calculateDistance,
+  LocationPoint,
 } from '../services/location';
 import { sendTripConfirmation } from '../services/notifications';
 import { 
@@ -52,6 +58,8 @@ import {
 import { useCarbon } from '../context/CarbonContext';
 import { TransportMode } from '../types/activity';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 /**
  * Transport mode options for selection
@@ -97,7 +105,15 @@ export function TransportScreen() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number | null>(null);
   
-  // Autocomplete state
+  // Map and location state
+  const [currentLocation, setCurrentLocation] = useState<{latitude: number; longitude: number} | null>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<{latitude: number; longitude: number}[]>([]);
+  const [currentSpeed, setCurrentSpeed] = useState(0);
+  const [detectedMode, setDetectedMode] = useState<TransportMode>('walk');
+  const mapRef = useRef<MapView | null>(null);
+  const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
+  
+  // Autocomplete state (for manual entry fallback)
   const [originSuggestions, setOriginSuggestions] = useState<Place[]>([]);
   const [destSuggestions, setDestSuggestions] = useState<Place[]>([]);
   const [showOriginSuggestions, setShowOriginSuggestions] = useState(false);
@@ -212,6 +228,118 @@ export function TransportScreen() {
       subscription.remove();
     };
   }, []);
+
+  /**
+   * Get initial location and start watching position
+   */
+  useEffect(() => {
+    let isMounted = true;
+    
+    const initLocation = async () => {
+      const perms = await hasLocationPermissions();
+      if (!perms.foreground) return;
+      
+      try {
+        // Get initial location
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        
+        if (isMounted) {
+          setCurrentLocation({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
+        }
+      } catch (error) {
+        console.log('Error getting initial location:', error);
+      }
+    };
+    
+    initLocation();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [hasPermissions]);
+
+  /**
+   * Watch location when tracking - updates map and calculates distance
+   */
+  useEffect(() => {
+    if (isTracking && hasPermissions) {
+      let lastPoint: {latitude: number; longitude: number} | null = null;
+      let totalDistance = 0;
+      const routePoints: {latitude: number; longitude: number}[] = [];
+      
+      // Start watching position
+      const startWatching = async () => {
+        locationSubscriptionRef.current = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.BestForNavigation,
+            timeInterval: 2000, // Update every 2 seconds
+            distanceInterval: 5, // Or every 5 meters
+          },
+          (location) => {
+            const newPoint = {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            };
+            
+            // Update current location
+            setCurrentLocation(newPoint);
+            
+            // Calculate speed (convert m/s to km/h)
+            const speedKmh = (location.coords.speed || 0) * 3.6;
+            setCurrentSpeed(speedKmh);
+            
+            // Detect transport mode based on speed
+            const mode = detectTransportMode(speedKmh, speedKmh);
+            setDetectedMode(mode);
+            
+            // Calculate distance from last point
+            if (lastPoint) {
+              const segmentDistance = calculateDistance(
+                lastPoint.latitude,
+                lastPoint.longitude,
+                newPoint.latitude,
+                newPoint.longitude
+              );
+              totalDistance += segmentDistance;
+              setLiveDistance(totalDistance);
+            }
+            
+            // Add to route
+            routePoints.push(newPoint);
+            setRouteCoordinates([...routePoints]);
+            lastPoint = newPoint;
+            
+            // Center map on current location
+            if (mapRef.current) {
+              mapRef.current.animateToRegion({
+                latitude: newPoint.latitude,
+                longitude: newPoint.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              }, 500);
+            }
+          }
+        );
+      };
+      
+      startWatching();
+      
+      return () => {
+        if (locationSubscriptionRef.current) {
+          locationSubscriptionRef.current.remove();
+          locationSubscriptionRef.current = null;
+        }
+      };
+    } else {
+      // Clear route when not tracking
+      setRouteCoordinates([]);
+    }
+  }, [isTracking, hasPermissions]);
 
   /**
    * Format elapsed time as HH:MM:SS
@@ -600,6 +728,112 @@ export function TransportScreen() {
     );
   }
 
+  // When tracking, show fullscreen map view
+  if (isTracking) {
+    return (
+      <View style={styles.mapContainer}>
+        <StatusBar barStyle="dark-content" />
+        
+        {/* Map View */}
+        <MapView
+          ref={mapRef}
+          style={styles.map}
+          provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+          initialRegion={currentLocation ? {
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          } : undefined}
+          showsUserLocation={true}
+          showsMyLocationButton={false}
+          followsUserLocation={true}
+        >
+          {/* Route Polyline */}
+          {routeCoordinates.length > 1 && (
+            <Polyline
+              coordinates={routeCoordinates}
+              strokeColor={Colors.primary}
+              strokeWidth={4}
+            />
+          )}
+          
+          {/* Start Marker */}
+          {routeCoordinates.length > 0 && (
+            <Marker
+              coordinate={routeCoordinates[0]}
+              title="Start"
+            >
+              <View style={styles.startMarker}>
+                <Ionicons name="flag" size={20} color={Colors.white} />
+              </View>
+            </Marker>
+          )}
+        </MapView>
+        
+        {/* Stats Overlay - Top */}
+        <SafeAreaView style={styles.mapOverlayTop}>
+          <View style={styles.mapHeader}>
+            <View style={styles.trackingBadge}>
+              <View style={styles.pulsingDotSmall} />
+              <Text style={styles.trackingBadgeText}>TRACKING</Text>
+            </View>
+            <Text style={styles.detectedModeText}>
+              {getModeInfo(detectedMode).emoji} {getModeInfo(detectedMode).label}
+            </Text>
+          </View>
+        </SafeAreaView>
+        
+        {/* Stats Overlay - Bottom */}
+        <View style={styles.mapOverlayBottom}>
+          <View style={styles.mapStatsCard}>
+            {/* Timer */}
+            <View style={styles.mapTimerRow}>
+              <Text style={styles.mapTimerValue}>{formatElapsedTime(elapsedTime)}</Text>
+            </View>
+            
+            {/* Stats Row */}
+            <View style={styles.mapStatsRow}>
+              <View style={styles.mapStat}>
+                <Text style={styles.mapStatValue}>{liveDistance.toFixed(2)}</Text>
+                <Text style={styles.mapStatLabel}>km</Text>
+              </View>
+              <View style={styles.mapStatDivider} />
+              <View style={styles.mapStat}>
+                <Text style={styles.mapStatValue}>{currentSpeed.toFixed(1)}</Text>
+                <Text style={styles.mapStatLabel}>km/h</Text>
+              </View>
+              <View style={styles.mapStatDivider} />
+              <View style={styles.mapStat}>
+                <Text style={styles.mapStatValue}>
+                  {calculateTripCarbon(liveDistance, detectedMode).toFixed(2)}
+                </Text>
+                <Text style={styles.mapStatLabel}>kg CO₂</Text>
+              </View>
+            </View>
+            
+            {/* Stop Button */}
+            <TouchableOpacity
+              style={styles.mapStopButton}
+              onPress={handleStopTrip}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <>
+                  <Ionicons name="stop" size={24} color={Colors.white} />
+                  <Text style={styles.mapStopButtonText}>Stop Trip</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // Normal view (not tracking)
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -616,78 +850,62 @@ export function TransportScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Tracking Card */}
-        <View style={styles.trackingCard}>
-          {isTracking ? (
-            <>
-              <View style={styles.trackingActive}>
-                <View style={styles.pulsingDot} />
-                <Text style={styles.trackingTitle}>Trip in Progress</Text>
-              </View>
-              
-              {/* Live Timer Display */}
-              <View style={styles.timerContainer}>
-                <Text style={styles.timerValue}>{formatElapsedTime(elapsedTime)}</Text>
-                <Text style={styles.timerLabel}>Time Elapsed</Text>
-              </View>
-              
-              <View style={styles.trackingStats}>
-                <View style={styles.trackingStat}>
-                  <Text style={styles.trackingStatValue}>
-                    {liveDistance.toFixed(2)}
-                  </Text>
-                  <Text style={styles.trackingStatLabel}>km</Text>
-                </View>
-                <View style={styles.trackingStatDivider} />
-                <View style={styles.trackingStat}>
-                  <Text style={styles.trackingStatValue}>
-                    {detectTransportMode(
-                      liveDistance / (elapsedTime / 3600) || 0,
-                      liveDistance / (elapsedTime / 3600) || 0
-                    ).toUpperCase()}
-                  </Text>
-                  <Text style={styles.trackingStatLabel}>detected mode</Text>
-                </View>
-              </View>
-              
-              <TouchableOpacity
-                style={styles.stopButton}
-                onPress={handleStopTrip}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color={Colors.white} />
-                ) : (
-                  <>
-                    <Ionicons name="stop" size={24} color={Colors.white} />
-                    <Text style={styles.stopButtonText}>Stop Trip</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </>
+        {/* Map Preview Card with Start Button */}
+        <View style={styles.mapPreviewCard}>
+          {currentLocation ? (
+            <MapView
+              style={styles.mapPreview}
+              provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+              initialRegion={{
+                latitude: currentLocation.latitude,
+                longitude: currentLocation.longitude,
+                latitudeDelta: 0.02,
+                longitudeDelta: 0.02,
+              }}
+              scrollEnabled={false}
+              zoomEnabled={false}
+              pitchEnabled={false}
+              rotateEnabled={false}
+              showsUserLocation={true}
+              showsMyLocationButton={false}
+            />
           ) : (
-            <>
-              <Ionicons name="car" size={48} color={Colors.categoryTransport} />
-              <Text style={styles.trackingTitle}>Track Your Trip</Text>
-              <Text style={styles.trackingSubtitle}>
-                Start tracking to auto-detect your transport mode
-              </Text>
-              <TouchableOpacity
-                style={styles.startButton}
-                onPress={handleStartTrip}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color={Colors.white} />
-                ) : (
-                  <>
-                    <Ionicons name="play" size={24} color={Colors.white} />
-                    <Text style={styles.startButtonText}>Start Trip</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </>
+            <View style={styles.mapPreviewPlaceholder}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.mapPreviewPlaceholderText}>Getting your location...</Text>
+            </View>
           )}
+          
+          {/* Overlay on map */}
+          <View style={styles.mapPreviewOverlay}>
+            <View style={styles.locationInfo}>
+              <Ionicons name="location" size={20} color={Colors.primary} />
+              <Text style={styles.locationText}>
+                {currentLocation 
+                  ? `${currentLocation.latitude.toFixed(4)}, ${currentLocation.longitude.toFixed(4)}`
+                  : 'Locating...'
+                }
+              </Text>
+            </View>
+            
+            <TouchableOpacity
+              style={styles.bigStartButton}
+              onPress={handleStartTrip}
+              disabled={isLoading || !currentLocation}
+            >
+              {isLoading ? (
+                <ActivityIndicator color={Colors.white} size="large" />
+              ) : (
+                <>
+                  <Ionicons name="play-circle" size={32} color={Colors.white} />
+                  <Text style={styles.bigStartButtonText}>Start Tracking</Text>
+                  <Text style={styles.bigStartButtonSubtext}>
+                    Auto-detect walk, bike, car, transit
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Manual Entry Button */}
@@ -1133,6 +1351,199 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  
+  // Map styles
+  mapContainer: {
+    flex: 1,
+  },
+  map: {
+    flex: 1,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+  },
+  mapOverlayTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  mapHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    marginHorizontal: Spacing.base,
+    marginTop: Spacing.sm,
+    borderRadius: BorderRadius.base,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  trackingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.carbonHigh + '20',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+  },
+  pulsingDotSmall: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.carbonHigh,
+    marginRight: Spacing.xs,
+  },
+  trackingBadgeText: {
+    ...TextStyles.caption,
+    color: Colors.carbonHigh,
+    fontWeight: '700',
+  },
+  detectedModeText: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '600',
+  },
+  mapOverlayBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+  },
+  mapStatsCard: {
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    marginHorizontal: Spacing.base,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.xl,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  mapTimerRow: {
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  mapTimerValue: {
+    fontSize: 48,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  mapStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+  },
+  mapStat: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  mapStatValue: {
+    ...TextStyles.h3,
+    color: Colors.textPrimary,
+    fontWeight: '700',
+  },
+  mapStatLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  mapStatDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: Colors.border,
+  },
+  mapStopButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.carbonHigh,
+    paddingVertical: Spacing.base,
+    borderRadius: BorderRadius.base,
+  },
+  mapStopButtonText: {
+    ...TextStyles.button,
+    color: Colors.white,
+    marginLeft: Spacing.sm,
+  },
+  startMarker: {
+    backgroundColor: Colors.primary,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.full,
+    borderWidth: 2,
+    borderColor: Colors.white,
+  },
+  
+  // Map Preview (not tracking)
+  mapPreviewCard: {
+    height: 300,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    marginBottom: Spacing.xl,
+    backgroundColor: Colors.surface,
+  },
+  mapPreview: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  mapPreviewPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.backgroundTertiary,
+  },
+  mapPreviewPlaceholderText: {
+    ...TextStyles.body,
+    color: Colors.textSecondary,
+    marginTop: Spacing.md,
+  },
+  mapPreviewOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'space-between',
+    padding: Spacing.base,
+  },
+  locationInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+  },
+  locationText: {
+    ...TextStyles.caption,
+    color: Colors.textPrimary,
+    marginLeft: Spacing.xs,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  bigStartButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.xl,
+    alignItems: 'center',
+  },
+  bigStartButtonText: {
+    ...TextStyles.h4,
+    color: Colors.white,
+    marginTop: Spacing.sm,
+  },
+  bigStartButtonSubtext: {
+    ...TextStyles.caption,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: Spacing.xs,
+  },
+  
   header: {
     paddingHorizontal: Spacing.base,
     paddingVertical: Spacing.md,
