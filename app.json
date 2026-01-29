@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "CarbonSense AR",
-    "slug": "carbonsense-ar",
+    "name": "GreenSense AR",
+    "slug": "greensense-ar",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,7 +26,9 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.carbonsense.ar",
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -37,7 +39,8 @@
         {
           "cameraPermission": "CarbonSense AR needs camera access to scan objects and estimate their carbon footprint."
         }
-      ]
+      ],
+      "expo-barcode-scanner"
     ],
     "extra": {
       "eas": {

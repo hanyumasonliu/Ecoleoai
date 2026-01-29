@@ -1,13 +1,13 @@
 /**
- * CarbonSense AR - Main App Entry Point
+ * GreenSense AR - Main App Entry Point
  * 
- * An AI-powered carbon footprint AR scanner for the Gemini 3 Hackathon.
+ * An AI-powered greenhouse gas tracker for the Gemini 3 Hackathon.
  * 
- * Point your camera at everyday objects and see an AR overlay of their
- * estimated lifetime carbon footprint.
+ * Track your daily carbon footprint by scanning products, logging meals,
+ * transport, and energy usage.
  * 
  * @author Gemini 3 Hackathon Team
- * @version 1.0.0 MVP
+ * @version 2.0.0
  */
 
 import React from 'react';
@@ -15,6 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { HistoryProvider } from './src/context/HistoryContext';
+import { CarbonProvider } from './src/context/CarbonContext';
 import { Colors } from './src/theme';
 
 /**
@@ -42,10 +43,12 @@ const AppTheme = {
 export default function App() {
   return (
     <HistoryProvider>
-      <NavigationContainer theme={AppTheme}>
-        <StatusBar style="light" />
-        <RootNavigator />
-      </NavigationContainer>
+      <CarbonProvider>
+        <NavigationContainer theme={AppTheme}>
+          <StatusBar style="light" />
+          <RootNavigator />
+        </NavigationContainer>
+      </CarbonProvider>
     </HistoryProvider>
   );
 }

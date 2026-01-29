@@ -1,11 +1,10 @@
 /**
- * CarbonSense AR - Gemini API Service
+ * GreenSense AR - Gemini API Service
  * 
  * Handles communication with Google's Gemini Vision API for image analysis
  * and coach message generation.
  * 
- * For MVP: Uses mocked responses to allow UI development.
- * TODO: Integrate real Gemini API calls when ready.
+ * Supports multiple scan modes: Product, Food, Receipt, Barcode
  */
 
 import Constants from 'expo-constants';
@@ -120,39 +119,54 @@ const MOCK_OBJECTS_DATABASE: Omit<AnalyzedObject, 'id'>[] = [
  * );
  */
 export async function analyzeImageWithGemini(
-  imageBase64: string
+  imageBase64: string,
+  customPrompt?: string
 ): Promise<GeminiAnalysisResponse> {
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
   
   const apiKey = getApiKey();
   
+  // Build the prompt based on mode
+  const defaultPrompt = `You are a carbon footprint analysis expert. Analyze this image and identify 3-5 visible objects. 
+For each object, estimate its lifetime carbon footprint in kg CO2e.
+
+Return ONLY a valid JSON array with this exact format, no other text:
+[
+  {
+    "name": "Object Name",
+    "carbonKg": 123.4,
+    "description": "Brief explanation of carbon impact"
+  }
+]
+
+Be realistic with carbon estimates based on manufacturing, materials, and typical usage.`;
+
+  const prompt = customPrompt ? `${customPrompt}
+
+Return ONLY a valid JSON array with this exact format, no other text:
+[
+  {
+    "name": "Item Name",
+    "carbonKg": 123.4,
+    "description": "Brief explanation of carbon impact"
+  }
+]
+
+Be realistic with carbon estimates.` : defaultPrompt;
+  
   // If API key is available, attempt real API call
   if (apiKey) {
     try {
       const response = await fetch(
-        `${GEMINI_API_BASE}/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        `${GEMINI_API_BASE}/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{
               parts: [
-                { 
-                  text: `You are a carbon footprint analysis expert. Analyze this image and identify 3-5 visible objects. 
-                  For each object, estimate its lifetime carbon footprint in kg CO2e.
-                  
-                  Return ONLY a valid JSON array with this exact format, no other text:
-                  [
-                    {
-                      "name": "Object Name",
-                      "carbonKg": 123.4,
-                      "description": "Brief explanation of carbon impact"
-                    }
-                  ]
-                  
-                  Be realistic with carbon estimates based on manufacturing, materials, and typical usage.`
-                },
+                { text: prompt },
                 { 
                   inline_data: { 
                     mime_type: 'image/jpeg', 
@@ -253,7 +267,7 @@ export async function generateCoachMessage(
   if (apiKey) {
     try {
       const response = await fetch(
-        `${GEMINI_API_BASE}/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        `${GEMINI_API_BASE}/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

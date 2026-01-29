@@ -15,10 +15,13 @@ import {
   StatusBar,
   Linking,
   Dimensions,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useHistory } from '../context/HistoryContext';
 import { syncProfileWithHistory } from '../services/storage';
+import { quickExport, exportAsCSV } from '../services/export';
 import { UserProfile } from '../types/carbon';
 import { Colors, Spacing, BorderRadius, TextStyles, Shadows } from '../theme';
 
@@ -63,6 +66,7 @@ export function ProfileScreen() {
   const { summary } = useHistory();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [expandedLearn, setExpandedLearn] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   
   /**
    * Load user profile
@@ -98,6 +102,41 @@ export function ProfileScreen() {
    */
   const handleLearnMore = () => {
     Linking.openURL('https://www.carbonfootprint.com/');
+  };
+
+  /**
+   * Handle data export
+   */
+  const handleExport = () => {
+    Alert.alert(
+      'Export Data',
+      'Choose export format:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Export as CSV',
+          onPress: async () => {
+            setIsExporting(true);
+            const success = await exportAsCSV();
+            setIsExporting(false);
+            if (!success) {
+              Alert.alert('Export Failed', 'Could not export data. Please try again.');
+            }
+          },
+        },
+        {
+          text: 'Export as JSON',
+          onPress: async () => {
+            setIsExporting(true);
+            const success = await quickExport();
+            setIsExporting(false);
+            if (!success) {
+              Alert.alert('Export Failed', 'Could not export data. Please try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   /**
@@ -243,6 +282,28 @@ export function ProfileScreen() {
           ))}
         </View>
         
+        {/* Actions */}
+        <View style={styles.actionsSection}>
+          <Text style={styles.actionsSectionTitle}>Settings & Data</Text>
+          
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={handleExport}
+            disabled={isExporting}
+          >
+            {isExporting ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons name="download-outline" size={22} color={Colors.primary} />
+            )}
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>Export Data</Text>
+              <Text style={styles.actionSubtitle}>Download as CSV or JSON</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
+        
         {/* Links */}
         <TouchableOpacity
           style={styles.linkButton}
@@ -257,9 +318,9 @@ export function ProfileScreen() {
         <View style={styles.appInfo}>
           <View style={styles.appLogoRow}>
             <Ionicons name="leaf" size={20} color={Colors.primary} />
-            <Text style={styles.appName}>CarbonSense AR</Text>
+            <Text style={styles.appName}>GreenSense AR</Text>
           </View>
-          <Text style={styles.appVersion}>Version 1.0.0 • Gemini 3 Hackathon</Text>
+          <Text style={styles.appVersion}>Version 2.0.0 • Gemini 3 Hackathon</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -472,7 +533,37 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   
-  // Link button
+  // Actions section
+  actionsSection: {
+    marginBottom: Spacing.base,
+  },
+  actionsSectionTitle: {
+    ...TextStyles.h5,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginBottom: Spacing.sm,
+  },
+  actionInfo: {
+    flex: 1,
+    marginLeft: Spacing.md,
+  },
+  actionTitle: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  actionSubtitle: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
   linkButton: {
     flexDirection: 'row',
     alignItems: 'center',

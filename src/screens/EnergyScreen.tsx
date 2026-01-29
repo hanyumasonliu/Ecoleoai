@@ -1,0 +1,667 @@
+/**
+ * GreenSense AR - Energy Screen
+ * 
+ * Log home energy usage:
+ * - Electricity
+ * - Natural gas
+ * - Heating
+ */
+
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  TouchableOpacity,
+  StatusBar,
+  TextInput,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
+
+// Storage key
+const STORAGE_KEY = '@greensense_energy_logs';
+
+/**
+ * Energy log entry
+ */
+interface EnergyLog {
+  id: string;
+  date: string;
+  type: 'electricity' | 'natural_gas' | 'heating_oil';
+  amount: number; // kWh for electricity, m³ for gas, liters for oil
+  unit: string;
+  carbonKg: number;
+  period: 'daily' | 'weekly' | 'monthly';
+  notes?: string;
+}
+
+/**
+ * Carbon emission factors
+ */
+const EMISSION_FACTORS = {
+  electricity: 0.4, // kg CO2e per kWh (US average)
+  natural_gas: 2.0, // kg CO2e per m³
+  heating_oil: 2.68, // kg CO2e per liter
+};
+
+/**
+ * Energy types for selection
+ */
+const ENERGY_TYPES = [
+  { 
+    type: 'electricity' as const, 
+    label: 'Electricity', 
+    icon: 'flash', 
+    color: '#EAB308',
+    unit: 'kWh',
+    placeholder: 'e.g., 500',
+  },
+  { 
+    type: 'natural_gas' as const, 
+    label: 'Natural Gas', 
+    icon: 'flame', 
+    color: '#3B82F6',
+    unit: 'm³',
+    placeholder: 'e.g., 50',
+  },
+  { 
+    type: 'heating_oil' as const, 
+    label: 'Heating Oil', 
+    icon: 'water', 
+    color: '#8B5CF6',
+    unit: 'liters',
+    placeholder: 'e.g., 100',
+  },
+];
+
+const PERIODS = [
+  { value: 'daily' as const, label: 'Daily' },
+  { value: 'weekly' as const, label: 'Weekly' },
+  { value: 'monthly' as const, label: 'Monthly' },
+];
+
+/**
+ * EnergyScreen Component
+ */
+export function EnergyScreen() {
+  const [selectedType, setSelectedType] = useState<'electricity' | 'natural_gas' | 'heating_oil'>('electricity');
+  const [amount, setAmount] = useState('');
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
+  const [logs, setLogs] = useState<EnergyLog[]>([]);
+  const [showForm, setShowForm] = useState(false);
+
+  /**
+   * Load logs from storage
+   */
+  useEffect(() => {
+    loadLogs();
+  }, []);
+
+  const loadLogs = async () => {
+    try {
+      const logsJson = await AsyncStorage.getItem(STORAGE_KEY);
+      if (logsJson) {
+        setLogs(JSON.parse(logsJson));
+      }
+    } catch (error) {
+      console.error('Error loading energy logs:', error);
+    }
+  };
+
+  const saveLogs = async (newLogs: EnergyLog[]) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newLogs));
+      setLogs(newLogs);
+    } catch (error) {
+      console.error('Error saving energy logs:', error);
+    }
+  };
+
+  /**
+   * Calculate carbon for energy usage
+   */
+  const calculateCarbon = (type: keyof typeof EMISSION_FACTORS, amountValue: number): number => {
+    return Math.round(amountValue * EMISSION_FACTORS[type] * 100) / 100;
+  };
+
+  /**
+   * Get daily carbon from log
+   */
+  const getDailyCarbon = (log: EnergyLog): number => {
+    switch (log.period) {
+      case 'daily': return log.carbonKg;
+      case 'weekly': return log.carbonKg / 7;
+      case 'monthly': return log.carbonKg / 30;
+    }
+  };
+
+  /**
+   * Add new energy log
+   */
+  const handleAddLog = () => {
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid positive number');
+      return;
+    }
+
+    const carbonKg = calculateCarbon(selectedType, amountNum);
+    const typeInfo = ENERGY_TYPES.find(t => t.type === selectedType)!;
+
+    const newLog: EnergyLog = {
+      id: `energy_${Date.now()}`,
+      date: new Date().toISOString(),
+      type: selectedType,
+      amount: amountNum,
+      unit: typeInfo.unit,
+      carbonKg,
+      period,
+    };
+
+    const newLogs = [newLog, ...logs];
+    saveLogs(newLogs);
+    
+    setAmount('');
+    setShowForm(false);
+    
+    Alert.alert(
+      '✅ Energy Logged',
+      `${amountNum} ${typeInfo.unit} of ${typeInfo.label.toLowerCase()} = ${carbonKg.toFixed(2)} kg CO₂e`
+    );
+  };
+
+  /**
+   * Delete log
+   */
+  const handleDeleteLog = (logId: string) => {
+    Alert.alert(
+      'Delete Log',
+      'Are you sure you want to delete this entry?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const newLogs = logs.filter(l => l.id !== logId);
+            saveLogs(newLogs);
+          },
+        },
+      ]
+    );
+  };
+
+  /**
+   * Calculate total daily carbon from all logs
+   */
+  const totalDailyCarbon = logs.reduce((sum, log) => sum + getDailyCarbon(log), 0);
+
+  const currentTypeInfo = ENERGY_TYPES.find(t => t.type === selectedType)!;
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Energy</Text>
+        {!showForm && (
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={() => setShowForm(true)}
+          >
+            <Ionicons name="add" size={24} color={Colors.white} />
+          </TouchableOpacity>
+        )}
+      </View>
+      
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+        >
+          {/* Summary Card */}
+          <View style={styles.summaryCard}>
+            <View style={styles.summaryIcon}>
+              <Ionicons name="flash" size={32} color={Colors.categoryEnergy} />
+            </View>
+            <View style={styles.summaryInfo}>
+              <Text style={styles.summaryValue}>
+                {totalDailyCarbon.toFixed(2)} kg
+              </Text>
+              <Text style={styles.summaryLabel}>CO₂e per day (home energy)</Text>
+            </View>
+          </View>
+
+          {/* Add Form */}
+          {showForm && (
+            <View style={styles.formCard}>
+              <Text style={styles.formTitle}>Log Energy Usage</Text>
+              
+              {/* Energy Type Selection */}
+              <Text style={styles.formLabel}>Energy Type</Text>
+              <View style={styles.typeSelector}>
+                {ENERGY_TYPES.map(({ type, label, icon, color }) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={[
+                      styles.typeOption,
+                      selectedType === type && { borderColor: color, backgroundColor: color + '20' },
+                    ]}
+                    onPress={() => setSelectedType(type)}
+                  >
+                    <Ionicons 
+                      name={icon as any} 
+                      size={24} 
+                      color={selectedType === type ? color : Colors.textSecondary} 
+                    />
+                    <Text 
+                      style={[
+                        styles.typeLabel,
+                        selectedType === type && { color },
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              
+              {/* Amount Input */}
+              <Text style={styles.formLabel}>Amount ({currentTypeInfo.unit})</Text>
+              <TextInput
+                style={styles.input}
+                placeholder={currentTypeInfo.placeholder}
+                placeholderTextColor={Colors.textTertiary}
+                keyboardType="decimal-pad"
+                value={amount}
+                onChangeText={setAmount}
+              />
+              
+              {/* Period Selection */}
+              <Text style={styles.formLabel}>Period</Text>
+              <View style={styles.periodSelector}>
+                {PERIODS.map(({ value, label }) => (
+                  <TouchableOpacity
+                    key={value}
+                    style={[
+                      styles.periodOption,
+                      period === value && styles.periodOptionActive,
+                    ]}
+                    onPress={() => setPeriod(value)}
+                  >
+                    <Text 
+                      style={[
+                        styles.periodLabel,
+                        period === value && styles.periodLabelActive,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              
+              {/* Preview */}
+              {amount && !isNaN(parseFloat(amount)) && (
+                <View style={styles.preview}>
+                  <Ionicons name="leaf" size={20} color={Colors.carbonMedium} />
+                  <Text style={styles.previewText}>
+                    ≈ {calculateCarbon(selectedType, parseFloat(amount)).toFixed(2)} kg CO₂e
+                  </Text>
+                </View>
+              )}
+              
+              {/* Actions */}
+              <View style={styles.formActions}>
+                <TouchableOpacity
+                  style={styles.cancelFormButton}
+                  onPress={() => {
+                    setShowForm(false);
+                    setAmount('');
+                  }}
+                >
+                  <Text style={styles.cancelFormText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.submitButton}
+                  onPress={handleAddLog}
+                >
+                  <Ionicons name="checkmark" size={20} color={Colors.white} />
+                  <Text style={styles.submitText}>Add Entry</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Energy Logs */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Energy Logs</Text>
+            {logs.length > 0 ? (
+              logs.map(log => {
+                const typeInfo = ENERGY_TYPES.find(t => t.type === log.type)!;
+                return (
+                  <TouchableOpacity
+                    key={log.id}
+                    style={styles.logCard}
+                    onLongPress={() => handleDeleteLog(log.id)}
+                  >
+                    <View style={[styles.logIcon, { backgroundColor: typeInfo.color + '20' }]}>
+                      <Ionicons name={typeInfo.icon as any} size={20} color={typeInfo.color} />
+                    </View>
+                    <View style={styles.logInfo}>
+                      <Text style={styles.logTitle}>
+                        {log.amount} {log.unit} • {typeInfo.label}
+                      </Text>
+                      <Text style={styles.logSubtitle}>
+                        {log.carbonKg.toFixed(2)} kg CO₂e ({log.period})
+                      </Text>
+                      <Text style={styles.logDate}>
+                        {new Date(log.date).toLocaleDateString()}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              <View style={styles.emptyState}>
+                <Ionicons name="flash-outline" size={48} color={Colors.textTertiary} />
+                <Text style={styles.emptyText}>No energy logs yet</Text>
+                <Text style={styles.emptySubtext}>
+                  Add your electricity or gas usage to track home emissions
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Info Card */}
+          <View style={styles.infoCard}>
+            <Ionicons name="information-circle" size={20} color={Colors.primary} />
+            <View style={styles.infoContent}>
+              <Text style={styles.infoTitle}>Emission Factors Used</Text>
+              <Text style={styles.infoText}>
+                • Electricity: 0.4 kg CO₂e/kWh (US average){'\n'}
+                • Natural Gas: 2.0 kg CO₂e/m³{'\n'}
+                • Heating Oil: 2.68 kg CO₂e/liter
+              </Text>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+  },
+  title: {
+    ...TextStyles.h2,
+    color: Colors.textPrimary,
+  },
+  addButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: Spacing.base,
+    paddingBottom: Spacing['3xl'],
+  },
+  
+  // Summary card
+  summaryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.xl,
+    marginBottom: Spacing.base,
+  },
+  summaryIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: Colors.categoryEnergy + '20',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.base,
+  },
+  summaryInfo: {
+    flex: 1,
+  },
+  summaryValue: {
+    ...TextStyles.h2,
+    color: Colors.textPrimary,
+  },
+  summaryLabel: {
+    ...TextStyles.body,
+    color: Colors.textSecondary,
+  },
+  
+  // Form
+  formCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.base,
+    marginBottom: Spacing.xl,
+  },
+  formTitle: {
+    ...TextStyles.h4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.base,
+  },
+  formLabel: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  typeSelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  typeOption: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    marginHorizontal: Spacing.xs,
+    borderRadius: BorderRadius.base,
+    borderWidth: 2,
+    borderColor: Colors.border,
+  },
+  typeLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: Spacing.xs,
+  },
+  input: {
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    color: Colors.textPrimary,
+    ...TextStyles.body,
+  },
+  periodSelector: {
+    flexDirection: 'row',
+  },
+  periodOption: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    marginHorizontal: Spacing.xs,
+    borderRadius: BorderRadius.base,
+    backgroundColor: Colors.backgroundTertiary,
+  },
+  periodOptionActive: {
+    backgroundColor: Colors.primary,
+  },
+  periodLabel: {
+    ...TextStyles.body,
+    color: Colors.textSecondary,
+  },
+  periodLabelActive: {
+    color: Colors.white,
+    fontWeight: '600',
+  },
+  preview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.carbonMediumBg,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  previewText: {
+    ...TextStyles.body,
+    color: Colors.carbonMedium,
+    marginLeft: Spacing.sm,
+    fontWeight: '600',
+  },
+  formActions: {
+    flexDirection: 'row',
+    marginTop: Spacing.xl,
+  },
+  cancelFormButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.base,
+    marginRight: Spacing.sm,
+    borderRadius: BorderRadius.base,
+    backgroundColor: Colors.backgroundTertiary,
+  },
+  cancelFormText: {
+    ...TextStyles.button,
+    color: Colors.textSecondary,
+  },
+  submitButton: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.base,
+    borderRadius: BorderRadius.base,
+    backgroundColor: Colors.primary,
+  },
+  submitText: {
+    ...TextStyles.button,
+    color: Colors.white,
+    marginLeft: Spacing.sm,
+  },
+  
+  // Section
+  section: {
+    marginBottom: Spacing.xl,
+  },
+  sectionTitle: {
+    ...TextStyles.h5,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
+  },
+  
+  // Log card
+  logCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginBottom: Spacing.sm,
+  },
+  logIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  logInfo: {
+    flex: 1,
+  },
+  logTitle: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  logSubtitle: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  logDate: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    marginTop: 4,
+  },
+  
+  // Empty state
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: Spacing['2xl'],
+  },
+  emptyText: {
+    ...TextStyles.body,
+    color: Colors.textTertiary,
+    marginTop: Spacing.md,
+  },
+  emptySubtext: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+  },
+  
+  // Info card
+  infoCard: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+  },
+  infoContent: {
+    flex: 1,
+    marginLeft: Spacing.md,
+  },
+  infoTitle: {
+    ...TextStyles.bodySmall,
+    color: Colors.textPrimary,
+    fontWeight: '600',
+  },
+  infoText: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: Spacing.xs,
+    lineHeight: 18,
+  },
+});
+
+export default EnergyScreen;
+

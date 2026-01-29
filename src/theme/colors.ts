@@ -34,6 +34,12 @@ export const Colors = {
   carbonLowBg: 'rgba(34, 197, 94, 0.15)',
   carbonMediumBg: 'rgba(245, 158, 11, 0.15)',
   carbonHighBg: 'rgba(239, 68, 68, 0.15)',
+  
+  // Category colors
+  categoryFood: '#3B82F6',
+  categoryTransport: '#F59E0B',
+  categoryProducts: '#8B5CF6',
+  categoryEnergy: '#EAB308',
 
   // Text colors
   textPrimary: '#F8FAFC',       // Main text - almost white
@@ -54,6 +60,7 @@ export const Colors = {
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.7)',
   overlayLight: 'rgba(0, 0, 0, 0.4)',
+  overlayDark: 'rgba(0, 0, 0, 0.85)',
 
   // Special
   white: '#FFFFFF',
