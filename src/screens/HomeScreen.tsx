@@ -384,28 +384,28 @@ export function HomeScreen() {
                 <View style={styles.detailStats}>
                   <View style={styles.detailStat}>
                     <Text style={styles.detailStatValue}>
-                      {selectedActivity.carbonKg.toFixed(2)}
+                      {selectedActivity.carbonKg < 0.01 
+                        ? selectedActivity.carbonKg.toFixed(4) 
+                        : selectedActivity.carbonKg.toFixed(2)}
                     </Text>
                     <Text style={styles.detailStatLabel}>kg CO₂e</Text>
                   </View>
-                  {selectedActivity.quantity && (
+                  {'distanceKm' in selectedActivity && (selectedActivity as any).distanceKm > 0 && (
                     <View style={styles.detailStat}>
                       <Text style={styles.detailStatValue}>
-                        {selectedActivity.quantity}
+                        {((selectedActivity as any).distanceKm as number).toFixed(2)}
                       </Text>
-                      <Text style={styles.detailStatLabel}>
-                        {selectedActivity.unit || 'units'}
-                      </Text>
+                      <Text style={styles.detailStatLabel}>km</Text>
                     </View>
                   )}
-                  {selectedActivity.ecoScore !== undefined && (
+                  {selectedActivity.ecoScore !== undefined && selectedActivity.ecoScore > 0 && (
                     <View style={styles.detailStat}>
                       <Text style={[
                         styles.detailStatValue,
                         { color: selectedActivity.ecoScore >= 70 ? Colors.carbonLow : 
                                  selectedActivity.ecoScore >= 40 ? Colors.carbonMedium : Colors.carbonHigh }
                       ]}>
-                        {selectedActivity.ecoScore}
+                        {Math.round(selectedActivity.ecoScore)}
                       </Text>
                       <Text style={styles.detailStatLabel}>Eco Score</Text>
                     </View>
@@ -429,11 +429,11 @@ export function HomeScreen() {
                     </View>
                   )}
                   
-                  {'distanceKm' in selectedActivity && (
+                  {'durationMinutes' in selectedActivity && (selectedActivity as any).durationMinutes > 0 && (
                     <View style={styles.detailInfoRow}>
-                      <Ionicons name="navigate-outline" size={16} color={Colors.textSecondary} />
+                      <Ionicons name="timer-outline" size={16} color={Colors.textSecondary} />
                       <Text style={styles.detailInfoText}>
-                        Distance: {((selectedActivity as any).distanceKm as number).toFixed(1)} km
+                        Duration: {Math.round((selectedActivity as any).durationMinutes)} min
                       </Text>
                     </View>
                   )}
