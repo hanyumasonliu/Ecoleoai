@@ -425,34 +425,84 @@ export function TransportScreen() {
    */
   const handleStopTrip = async () => {
     setIsLoading(true);
+    
+    // Use the live distance we tracked in the UI (more accurate)
+    const finalDistance = liveDistance > 0 ? liveDistance : 0;
+    const finalDuration = elapsedTime / 60; // Convert seconds to minutes
+    const finalMode = detectedMode;
+    const finalCarbon = calculateTripCarbon(finalDistance, finalMode);
+    
     const trip = await stopTrip();
     
     if (trip) {
+      // Update trip with our tracked values
+      trip.distanceKm = Math.max(trip.distanceKm, finalDistance);
+      trip.durationMinutes = Math.max(trip.durationMinutes, finalDuration);
+      trip.detectedMode = finalMode;
+      trip.carbonKg = calculateTripCarbon(trip.distanceKm, finalMode);
+      
       setIsTracking(false);
       setCurrentTripData(null);
       
-      // Send notification for confirmation
-      await sendTripConfirmation(
-        trip.id,
-        trip.distanceKm,
-        trip.detectedMode,
-        trip.carbonKg
-      );
+      // Only show confirmation if trip has meaningful distance
+      if (trip.distanceKm >= 0.01) { // At least 10 meters
+        // Send notification for confirmation
+        await sendTripConfirmation(
+          trip.id,
+          trip.distanceKm,
+          trip.detectedMode,
+          trip.carbonKg
+        );
+        
+        // Show confirmation dialog
+        setSelectedTrip(trip);
+      } else {
+        Alert.alert(
+          'Trip Too Short',
+          'This trip was too short to record. Try moving a longer distance.',
+          [{ text: 'OK' }]
+        );
+      }
       
       // Refresh data
       await loadData();
-      
-      // Show confirmation dialog
-      setSelectedTrip(trip);
     }
     setIsLoading(false);
   };
 
   /**
-   * Confirm trip mode
+   * Confirm trip mode and save to Journey
    */
   const handleConfirmTrip = async (trip: Trip, mode: TransportMode) => {
+    // Calculate carbon with confirmed mode
+    const carbonKg = calculateTripCarbon(trip.distanceKm, mode);
+    
+    // Confirm in location service
     await confirmTrip(trip.id, mode);
+    
+    // Also add to Carbon Context so it shows in Journey screen
+    try {
+      await addTransportActivity({
+        name: `${getModeName(mode)} trip`,
+        carbonKg,
+        mode,
+        distanceKm: trip.distanceKm,
+        durationMinutes: trip.durationMinutes,
+        startLocation: 'GPS tracked',
+        quantity: trip.distanceKm,
+        unit: 'km',
+        ecoScore: Math.max(0, 100 - Math.round(carbonKg * 10)),
+      });
+      
+      Alert.alert(
+        'Trip Saved! 🎉',
+        `${trip.distanceKm.toFixed(2)} km by ${getModeName(mode)}\n${carbonKg.toFixed(2)} kg CO₂e`,
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Error saving trip to journey:', error);
+    }
+    
     setSelectedTrip(null);
     await loadData();
   };
@@ -1695,7 +1745,7 @@ const styles = StyleSheet.create({
   },
   detectedModeText: {
     ...TextStyles.body,
-    color: Colors.textPrimary,
+    color: '#1F2937', // Dark text on white header
     fontWeight: '600',
   },
   mapOverlayBottom: {
@@ -1723,7 +1773,7 @@ const styles = StyleSheet.create({
   mapTimerValue: {
     fontSize: 48,
     fontWeight: '700',
-    color: Colors.textPrimary,
+    color: '#1F2937', // Dark gray for visibility on white background
     fontVariant: ['tabular-nums'],
   },
   mapStatsRow: {
@@ -1737,19 +1787,19 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   mapStatValue: {
-    ...TextStyles.h3,
-    color: Colors.textPrimary,
+    fontSize: 24,
     fontWeight: '700',
+    color: '#1F2937', // Dark gray for visibility on white background
   },
   mapStatLabel: {
     ...TextStyles.caption,
-    color: Colors.textSecondary,
+    color: '#6B7280', // Medium gray for labels
     marginTop: 2,
   },
   mapStatDivider: {
     width: 1,
     height: 40,
-    backgroundColor: Colors.border,
+    backgroundColor: '#E5E7EB', // Light gray divider
   },
   mapStopButton: {
     flexDirection: 'row',
