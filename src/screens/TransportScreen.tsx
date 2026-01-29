@@ -8,7 +8,7 @@
  * - View trip history
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   TextInput,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -36,6 +37,7 @@ import {
   requestLocationPermissions,
   hasLocationPermissions,
   calculateTripCarbon,
+  detectTransportMode,
 } from '../services/location';
 import { sendTripConfirmation } from '../services/notifications';
 import { 
@@ -83,8 +85,15 @@ export function TransportScreen() {
   const [manualDestination, setManualDestination] = useState('');
   const [manualMode, setManualMode] = useState<TransportMode>('car');
   const [manualDistance, setManualDistance] = useState('');
+  const [manualDuration, setManualDuration] = useState(''); // For flights
   const [tripCalculation, setTripCalculation] = useState<TripCalculation | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
+  
+  // Timer state for live tracking
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [liveDistance, setLiveDistance] = useState(0);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const startTimeRef = useRef<number | null>(null);
   
   const { addTransportActivity } = useCarbon();
 
@@ -118,6 +127,95 @@ export function TransportScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  /**
+   * Request permissions on mount if not granted
+   */
+  useEffect(() => {
+    const checkAndRequestPermissions = async () => {
+      const perms = await hasLocationPermissions();
+      if (!perms.foreground) {
+        // Will show permission screen
+        setHasPermissions(false);
+      }
+    };
+    checkAndRequestPermissions();
+  }, []);
+
+  /**
+   * Timer effect - updates every second when tracking
+   */
+  useEffect(() => {
+    if (isTracking && currentTripData) {
+      // Set start time reference
+      startTimeRef.current = new Date(currentTripData.startTime).getTime();
+      
+      // Start the timer
+      timerRef.current = setInterval(() => {
+        if (startTimeRef.current) {
+          const now = Date.now();
+          const elapsed = Math.floor((now - startTimeRef.current) / 1000);
+          setElapsedTime(elapsed);
+          
+          // Update distance from current trip data
+          const trip = getCurrentTrip();
+          if (trip) {
+            setLiveDistance(trip.distanceKm);
+          }
+        }
+      }, 1000);
+      
+      return () => {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+      };
+    } else {
+      // Clear timer when not tracking
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setElapsedTime(0);
+      setLiveDistance(0);
+      startTimeRef.current = null;
+    }
+  }, [isTracking, currentTripData]);
+
+  /**
+   * Handle app state changes (background/foreground)
+   */
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (nextAppState === 'active') {
+        // App came to foreground - refresh tracking state
+        const tracking = isTripInProgress();
+        setIsTracking(tracking);
+        if (tracking) {
+          setCurrentTripData(getCurrentTrip());
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  /**
+   * Format elapsed time as HH:MM:SS
+   */
+  const formatElapsedTime = (seconds: number): string => {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hrs > 0) {
+      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   /**
    * Refresh data
@@ -323,12 +421,66 @@ export function TransportScreen() {
       setManualOrigin('');
       setManualDestination('');
       setManualDistance('');
+      setManualDuration('');
       setTripCalculation(null);
       
       await loadData();
     } catch (error) {
       console.error('Error saving trip:', error);
       Alert.alert('Error', 'Could not save trip. Please try again.');
+    }
+  };
+
+  /**
+   * Save flight based on duration
+   */
+  const handleSaveFlight = async () => {
+    const hours = parseFloat(manualDuration);
+    if (isNaN(hours) || hours <= 0) {
+      Alert.alert('Invalid Duration', 'Please enter a valid flight duration in hours.');
+      return;
+    }
+
+    // Average cruising speed ~850 km/h
+    const distance = hours * 850;
+    const carbonKg = calculateTripCarbon(distance, 'plane');
+    const durationMinutes = hours * 60;
+
+    const flightName = manualOrigin && manualDestination 
+      ? `${manualOrigin.toUpperCase()} → ${manualDestination.toUpperCase()}`
+      : `Flight - ${hours.toFixed(1)}h`;
+
+    try {
+      await addTransportActivity({
+        name: flightName,
+        carbonKg,
+        mode: 'plane',
+        distanceKm: distance,
+        durationMinutes,
+        startLocation: manualOrigin || undefined,
+        endLocation: manualDestination || undefined,
+        quantity: distance,
+        unit: 'km',
+        ecoScore: Math.max(0, 100 - Math.round(carbonKg / 10)), // Flights get lower scores
+      });
+
+      Alert.alert(
+        'Flight Saved', 
+        `${carbonKg.toFixed(1)} kg CO₂e added.\n\nThat's equivalent to ~${(carbonKg / 0.171).toFixed(0)} km by car!`
+      );
+      
+      // Reset
+      setShowManualEntry(false);
+      setManualOrigin('');
+      setManualDestination('');
+      setManualDistance('');
+      setManualDuration('');
+      setTripCalculation(null);
+      
+      await loadData();
+    } catch (error) {
+      console.error('Error saving flight:', error);
+      Alert.alert('Error', 'Could not save flight. Please try again.');
     }
   };
 
@@ -388,23 +540,32 @@ export function TransportScreen() {
                 <View style={styles.pulsingDot} />
                 <Text style={styles.trackingTitle}>Trip in Progress</Text>
               </View>
-              {currentTripData && (
-                <View style={styles.trackingStats}>
-                  <View style={styles.trackingStat}>
-                    <Text style={styles.trackingStatValue}>
-                      {currentTripData.distanceKm.toFixed(2)}
-                    </Text>
-                    <Text style={styles.trackingStatLabel}>km</Text>
-                  </View>
-                  <View style={styles.trackingStatDivider} />
-                  <View style={styles.trackingStat}>
-                    <Text style={styles.trackingStatValue}>
-                      {formatDuration(currentTripData.durationMinutes)}
-                    </Text>
-                    <Text style={styles.trackingStatLabel}>duration</Text>
-                  </View>
+              
+              {/* Live Timer Display */}
+              <View style={styles.timerContainer}>
+                <Text style={styles.timerValue}>{formatElapsedTime(elapsedTime)}</Text>
+                <Text style={styles.timerLabel}>Time Elapsed</Text>
+              </View>
+              
+              <View style={styles.trackingStats}>
+                <View style={styles.trackingStat}>
+                  <Text style={styles.trackingStatValue}>
+                    {liveDistance.toFixed(2)}
+                  </Text>
+                  <Text style={styles.trackingStatLabel}>km</Text>
                 </View>
-              )}
+                <View style={styles.trackingStatDivider} />
+                <View style={styles.trackingStat}>
+                  <Text style={styles.trackingStatValue}>
+                    {detectTransportMode(
+                      liveDistance / (elapsedTime / 3600) || 0,
+                      liveDistance / (elapsedTime / 3600) || 0
+                    ).toUpperCase()}
+                  </Text>
+                  <Text style={styles.trackingStatLabel}>detected mode</Text>
+                </View>
+              </View>
+              
               <TouchableOpacity
                 style={styles.stopButton}
                 onPress={handleStopTrip}
@@ -536,6 +697,7 @@ export function TransportScreen() {
                 setManualOrigin('');
                 setManualDestination('');
                 setManualDistance('');
+                setManualDuration('');
               }}>
                 <Ionicons name="close" size={24} color={Colors.textSecondary} />
               </TouchableOpacity>
@@ -545,7 +707,7 @@ export function TransportScreen() {
               {/* Transport Mode Selector */}
               <Text style={styles.inputLabel}>Transport Mode</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeScrollView}>
-                {TRANSPORT_MODES.slice(0, 7).map(({ mode, label, emoji }) => (
+                {TRANSPORT_MODES.map(({ mode, label, emoji }) => (
                   <TouchableOpacity
                     key={mode}
                     style={[
@@ -563,22 +725,107 @@ export function TransportScreen() {
                 ))}
               </ScrollView>
 
-              {/* Route Input */}
-              <Text style={styles.inputLabel}>Route (Optional)</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder="Starting point (e.g., Home, 123 Main St)"
-                placeholderTextColor={Colors.textTertiary}
-                value={manualOrigin}
-                onChangeText={setManualOrigin}
-              />
-              <TextInput
-                style={styles.textInput}
-                placeholder="Destination (e.g., Office, Airport)"
-                placeholderTextColor={Colors.textTertiary}
-                value={manualDestination}
-                onChangeText={setManualDestination}
-              />
+              {/* Flight-specific input */}
+              {manualMode === 'plane' && (
+                <View style={styles.flightSection}>
+                  <View style={styles.flightBanner}>
+                    <Ionicons name="airplane" size={24} color={Colors.categoryTransport} />
+                    <Text style={styles.flightBannerText}>Flight Entry</Text>
+                  </View>
+                  <Text style={styles.flightHint}>
+                    Enter your flight duration and we'll estimate the distance and carbon footprint based on average cruising speed.
+                  </Text>
+                  
+                  <Text style={styles.inputLabel}>Flight Duration (hours)</Text>
+                  <View style={styles.distanceInputRow}>
+                    <TextInput
+                      style={[styles.textInput, styles.distanceInput]}
+                      placeholder="e.g., 2.5"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={manualDuration}
+                      onChangeText={setManualDuration}
+                      keyboardType="numeric"
+                    />
+                    <Text style={styles.distanceUnit}>hours</Text>
+                  </View>
+                  
+                  {manualDuration && parseFloat(manualDuration) > 0 && (
+                    <View style={styles.flightCalculation}>
+                      <View style={styles.calculationRow}>
+                        <Text style={styles.calculationLabel}>Flight Time</Text>
+                        <Text style={styles.calculationValue}>{parseFloat(manualDuration).toFixed(1)} hours</Text>
+                      </View>
+                      <View style={styles.calculationRow}>
+                        <Text style={styles.calculationLabel}>Est. Distance</Text>
+                        <Text style={styles.calculationValue}>
+                          {/* Average cruising speed ~850 km/h */}
+                          {(parseFloat(manualDuration) * 850).toFixed(0)} km
+                        </Text>
+                      </View>
+                      <View style={styles.calculationRowHighlight}>
+                        <Text style={styles.calculationLabelBold}>Carbon Footprint</Text>
+                        <Text style={styles.calculationValueBold}>
+                          {/* 0.255 kg CO2e per km for flights */}
+                          {(parseFloat(manualDuration) * 850 * 0.255).toFixed(1)} kg CO₂e
+                        </Text>
+                      </View>
+                      <Text style={styles.flightImpactNote}>
+                        💡 Flying produces ~{(parseFloat(manualDuration) * 850 * 0.255 / 8.8).toFixed(1)}x a typical daily carbon budget
+                      </Text>
+                      
+                      <TouchableOpacity
+                        style={styles.saveFlightButton}
+                        onPress={handleSaveFlight}
+                      >
+                        <Ionicons name="airplane" size={20} color={Colors.white} />
+                        <Text style={styles.saveButtonText}>Save Flight</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Route Input - hide for flights */}
+              {manualMode !== 'plane' && (
+                <>
+                  <Text style={styles.inputLabel}>Route (Optional)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Starting point (e.g., Home, 123 Main St)"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={manualOrigin}
+                    onChangeText={setManualOrigin}
+                  />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Destination (e.g., Office, Airport)"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={manualDestination}
+                    onChangeText={setManualDestination}
+                  />
+                </>
+              )}
+              
+              {/* Airport input for flights */}
+              {manualMode === 'plane' && (
+                <>
+                  <Text style={styles.inputLabel}>Flight Route (Optional)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Departure airport (e.g., LAX, JFK)"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={manualOrigin}
+                    onChangeText={setManualOrigin}
+                  />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Arrival airport (e.g., SFO, LHR)"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={manualDestination}
+                    onChangeText={setManualDestination}
+                  />
+                </>
+              )}
 
               {/* Calculate Button */}
               {manualOrigin && manualDestination && (
@@ -831,6 +1078,28 @@ const styles = StyleSheet.create({
     ...TextStyles.button,
     color: Colors.white,
     marginLeft: Spacing.sm,
+  },
+  
+  // Timer
+  timerContainer: {
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing['2xl'],
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+  },
+  timerValue: {
+    fontSize: 48,
+    fontWeight: '700',
+    color: Colors.categoryTransport,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 2,
+  },
+  timerLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: Spacing.xs,
   },
   
   // Section
@@ -1216,6 +1485,54 @@ const styles = StyleSheet.create({
     color: Colors.white,
     marginLeft: Spacing.sm,
   },
+  
+  // Flight-specific styles
+  flightSection: {
+    marginTop: Spacing.md,
+  },
+  flightBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.categoryTransport + '20',
+    padding: Spacing.base,
+    borderRadius: BorderRadius.base,
+    marginBottom: Spacing.md,
+  },
+  flightBannerText: {
+    ...TextStyles.body,
+    color: Colors.categoryTransport,
+    fontWeight: '600',
+    marginLeft: Spacing.sm,
+  },
+  flightHint: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+    lineHeight: 20,
+  },
+  flightCalculation: {
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginTop: Spacing.md,
+  },
+  flightImpactNote: {
+    ...TextStyles.bodySmall,
+    color: Colors.carbonMedium,
+    marginTop: Spacing.md,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  saveFlightButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.categoryTransport,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
