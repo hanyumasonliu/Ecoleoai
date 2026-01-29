@@ -10,6 +10,7 @@ export * from './location';
 export * from './notifications';
 export * from './export';
 export * from './barcode';
+export * from './travelImpact';
 
 // Maps service - import specific functions to avoid naming conflicts
 export { 

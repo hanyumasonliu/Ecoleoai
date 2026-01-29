@@ -55,6 +55,11 @@ import {
   searchPlaces,
   Place,
 } from '../services/maps';
+import {
+  getFlightEmissions,
+  getSeatClassImpact,
+  SeatClass,
+} from '../services/travelImpact';
 import { useCarbon } from '../context/CarbonContext';
 import { TransportMode } from '../types/activity';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
@@ -98,6 +103,22 @@ export function TransportScreen() {
   const [manualDuration, setManualDuration] = useState(''); // For flights
   const [tripCalculation, setTripCalculation] = useState<TripCalculation | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
+  
+  // Flight-specific state (Travel Impact Model)
+  const [seatClass, setSeatClass] = useState<SeatClass>('economy');
+  const [flightEmissions, setFlightEmissions] = useState<{
+    carbonKg: number;
+    distanceKm: number;
+    emissionsByClass: {
+      economy: number;
+      premiumEconomy: number;
+      business: number;
+      first: number;
+    };
+    source: 'travel_impact_model' | 'fallback';
+    accuracy: 'high' | 'medium';
+  } | null>(null);
+  const [isCalculatingFlight, setIsCalculatingFlight] = useState(false);
   
   // Timer state for live tracking
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -644,12 +665,88 @@ export function TransportScreen() {
   };
 
   /**
-   * Save flight based on duration
+   * Calculate flight emissions using Travel Impact Model API
+   */
+  const handleCalculateFlightEmissions = async () => {
+    if (!manualOrigin.trim() || !manualDestination.trim()) {
+      Alert.alert('Missing Information', 'Please enter both origin and destination airport codes (e.g., LAX, JFK).');
+      return;
+    }
+
+    setIsCalculatingFlight(true);
+    try {
+      const result = await getFlightEmissions(
+        manualOrigin.trim(),
+        manualDestination.trim(),
+        seatClass
+      );
+      setFlightEmissions(result);
+    } catch (error) {
+      console.error('Error calculating flight emissions:', error);
+      Alert.alert('Calculation Error', 'Could not calculate flight emissions. Please try again.');
+    } finally {
+      setIsCalculatingFlight(false);
+    }
+  };
+
+  /**
+   * Save flight using Travel Impact Model data or fallback
    */
   const handleSaveFlight = async () => {
+    // Use Travel Impact Model data if available
+    if (flightEmissions) {
+      const flightName = `${manualOrigin.toUpperCase()} → ${manualDestination.toUpperCase()}`;
+      const seatClassLabel = seatClass === 'premium_economy' ? 'Premium Economy' 
+        : seatClass.charAt(0).toUpperCase() + seatClass.slice(1);
+
+      try {
+        await addTransportActivity({
+          name: flightName,
+          carbonKg: flightEmissions.carbonKg,
+          mode: 'plane',
+          distanceKm: flightEmissions.distanceKm,
+          durationMinutes: (flightEmissions.distanceKm / 850) * 60, // Estimate duration
+          startLocation: manualOrigin.toUpperCase(),
+          endLocation: manualDestination.toUpperCase(),
+          quantity: flightEmissions.distanceKm,
+          unit: 'km',
+          ecoScore: Math.max(0, 100 - Math.round(flightEmissions.carbonKg / 20)),
+        });
+
+        const sourceInfo = flightEmissions.source === 'travel_impact_model' 
+          ? '✅ Calculated using Google Travel Impact Model (high accuracy)'
+          : '📊 Estimated using industry averages';
+
+        Alert.alert(
+          'Flight Saved', 
+          `${flightEmissions.carbonKg.toFixed(1)} kg CO₂e (${seatClassLabel})\n\n` +
+          `Distance: ${flightEmissions.distanceKm.toFixed(0)} km\n\n` +
+          `${sourceInfo}\n\n` +
+          `That's equivalent to ~${(flightEmissions.carbonKg / 0.171).toFixed(0)} km by car!`
+        );
+        
+        // Reset
+        setShowManualEntry(false);
+        setManualOrigin('');
+        setManualDestination('');
+        setManualDistance('');
+        setManualDuration('');
+        setTripCalculation(null);
+        setFlightEmissions(null);
+        setSeatClass('economy');
+        
+        await loadData();
+      } catch (error) {
+        console.error('Error saving flight:', error);
+        Alert.alert('Error', 'Could not save flight. Please try again.');
+      }
+      return;
+    }
+
+    // Fallback to duration-based calculation
     const hours = parseFloat(manualDuration);
     if (isNaN(hours) || hours <= 0) {
-      Alert.alert('Invalid Duration', 'Please enter a valid flight duration in hours.');
+      Alert.alert('Missing Information', 'Please calculate emissions using airport codes, or enter flight duration.');
       return;
     }
 
@@ -673,7 +770,7 @@ export function TransportScreen() {
         endLocation: manualDestination || undefined,
         quantity: distance,
         unit: 'km',
-        ecoScore: Math.max(0, 100 - Math.round(carbonKg / 10)), // Flights get lower scores
+        ecoScore: Math.max(0, 100 - Math.round(carbonKg / 10)),
       });
 
       Alert.alert(
@@ -688,6 +785,8 @@ export function TransportScreen() {
       setManualDistance('');
       setManualDuration('');
       setTripCalculation(null);
+      setFlightEmissions(null);
+      setSeatClass('economy');
       
       await loadData();
     } catch (error) {
@@ -1027,52 +1126,183 @@ export function TransportScreen() {
                 ))}
               </ScrollView>
 
-              {/* Flight-specific input */}
+              {/* Flight-specific input with Travel Impact Model */}
               {manualMode === 'plane' && (
                 <View style={styles.flightSection}>
                   <View style={styles.flightBanner}>
                     <Ionicons name="airplane" size={24} color={Colors.categoryTransport} />
                     <Text style={styles.flightBannerText}>Flight Entry</Text>
+                    <View style={styles.accuracyBadge}>
+                      <Text style={styles.accuracyBadgeText}>Google Travel Impact</Text>
+                    </View>
                   </View>
                   <Text style={styles.flightHint}>
-                    Enter your flight duration and we'll estimate the distance and carbon footprint based on average cruising speed.
+                    Enter airport codes for accurate emissions using Google's Travel Impact Model API.
                   </Text>
                   
-                  <Text style={styles.inputLabel}>Flight Duration (hours)</Text>
-                  <View style={styles.distanceInputRow}>
-                    <TextInput
-                      style={[styles.textInput, styles.distanceInput]}
-                      placeholder="e.g., 2.5"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={manualDuration}
-                      onChangeText={setManualDuration}
-                      keyboardType="numeric"
-                    />
-                    <Text style={styles.distanceUnit}>hours</Text>
+                  {/* Airport Codes */}
+                  <Text style={styles.inputLabel}>Airport Codes (IATA)</Text>
+                  <View style={styles.airportInputRow}>
+                    <View style={styles.airportInput}>
+                      <TextInput
+                        style={styles.airportInputField}
+                        placeholder="LAX"
+                        placeholderTextColor={Colors.textTertiary}
+                        value={manualOrigin}
+                        onChangeText={(text) => {
+                          setManualOrigin(text.toUpperCase());
+                          setFlightEmissions(null);
+                        }}
+                        maxLength={3}
+                        autoCapitalize="characters"
+                      />
+                      <Text style={styles.airportInputLabel}>From</Text>
+                    </View>
+                    <Ionicons name="arrow-forward" size={20} color={Colors.textTertiary} />
+                    <View style={styles.airportInput}>
+                      <TextInput
+                        style={styles.airportInputField}
+                        placeholder="JFK"
+                        placeholderTextColor={Colors.textTertiary}
+                        value={manualDestination}
+                        onChangeText={(text) => {
+                          setManualDestination(text.toUpperCase());
+                          setFlightEmissions(null);
+                        }}
+                        maxLength={3}
+                        autoCapitalize="characters"
+                      />
+                      <Text style={styles.airportInputLabel}>To</Text>
+                    </View>
                   </View>
                   
-                  {manualDuration && parseFloat(manualDuration) > 0 && (
+                  {/* Seat Class Selector */}
+                  <Text style={styles.inputLabel}>Seat Class</Text>
+                  <View style={styles.seatClassRow}>
+                    {([
+                      { value: 'economy', label: 'Economy', icon: '💺' },
+                      { value: 'premium_economy', label: 'Premium', icon: '🪑' },
+                      { value: 'business', label: 'Business', icon: '💼' },
+                      { value: 'first', label: 'First', icon: '👑' },
+                    ] as { value: SeatClass; label: string; icon: string }[]).map(({ value, label, icon }) => (
+                      <TouchableOpacity
+                        key={value}
+                        style={[
+                          styles.seatClassButton,
+                          seatClass === value && styles.seatClassButtonActive,
+                        ]}
+                        onPress={() => {
+                          setSeatClass(value);
+                          setFlightEmissions(null);
+                        }}
+                      >
+                        <Text style={styles.seatClassIcon}>{icon}</Text>
+                        <Text style={[
+                          styles.seatClassLabel,
+                          seatClass === value && styles.seatClassLabelActive,
+                        ]}>{label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  
+                  {/* Calculate Button */}
+                  {manualOrigin.length === 3 && manualDestination.length === 3 && !flightEmissions && (
+                    <TouchableOpacity
+                      style={styles.calculateFlightButton}
+                      onPress={handleCalculateFlightEmissions}
+                      disabled={isCalculatingFlight}
+                    >
+                      {isCalculatingFlight ? (
+                        <ActivityIndicator color={Colors.white} />
+                      ) : (
+                        <>
+                          <Ionicons name="calculator" size={20} color={Colors.white} />
+                          <Text style={styles.calculateButtonText}>Calculate Emissions</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                  
+                  {/* Flight Calculation Result */}
+                  {flightEmissions && (
                     <View style={styles.flightCalculation}>
+                      {/* Accuracy indicator */}
+                      <View style={[
+                        styles.accuracyIndicator,
+                        flightEmissions.accuracy === 'high' && styles.accuracyHigh,
+                      ]}>
+                        <Ionicons 
+                          name={flightEmissions.accuracy === 'high' ? 'checkmark-circle' : 'information-circle'} 
+                          size={16} 
+                          color={flightEmissions.accuracy === 'high' ? Colors.carbonLow : Colors.carbonMedium} 
+                        />
+                        <Text style={[
+                          styles.accuracyText,
+                          flightEmissions.accuracy === 'high' && styles.accuracyTextHigh,
+                        ]}>
+                          {flightEmissions.accuracy === 'high' 
+                            ? 'High accuracy (Travel Impact Model)' 
+                            : 'Estimated (industry averages)'}
+                        </Text>
+                      </View>
+                      
                       <View style={styles.calculationRow}>
-                        <Text style={styles.calculationLabel}>Flight Time</Text>
-                        <Text style={styles.calculationValue}>{parseFloat(manualDuration).toFixed(1)} hours</Text>
+                        <Text style={styles.calculationLabel}>Route</Text>
+                        <Text style={styles.calculationValue}>
+                          {manualOrigin} → {manualDestination}
+                        </Text>
                       </View>
                       <View style={styles.calculationRow}>
-                        <Text style={styles.calculationLabel}>Est. Distance</Text>
+                        <Text style={styles.calculationLabel}>Distance</Text>
                         <Text style={styles.calculationValue}>
-                          {/* Average cruising speed ~850 km/h */}
-                          {(parseFloat(manualDuration) * 850).toFixed(0)} km
+                          {flightEmissions.distanceKm.toFixed(0)} km
+                        </Text>
+                      </View>
+                      <View style={styles.calculationRow}>
+                        <Text style={styles.calculationLabel}>Seat Class</Text>
+                        <Text style={styles.calculationValue}>
+                          {seatClass === 'premium_economy' ? 'Premium Economy' 
+                            : seatClass.charAt(0).toUpperCase() + seatClass.slice(1)}
                         </Text>
                       </View>
                       <View style={styles.calculationRowHighlight}>
                         <Text style={styles.calculationLabelBold}>Carbon Footprint</Text>
                         <Text style={styles.calculationValueBold}>
-                          {/* 0.255 kg CO2e per km for flights */}
-                          {(parseFloat(manualDuration) * 850 * 0.255).toFixed(1)} kg CO₂e
+                          {flightEmissions.carbonKg.toFixed(1)} kg CO₂e
                         </Text>
                       </View>
+                      
+                      {/* Seat class comparison */}
+                      <Text style={styles.seatClassCompareTitle}>Emissions by Seat Class</Text>
+                      <View style={styles.seatClassCompare}>
+                        <View style={styles.seatClassCompareItem}>
+                          <Text style={styles.seatClassCompareLabel}>Economy</Text>
+                          <Text style={styles.seatClassCompareValue}>
+                            {flightEmissions.emissionsByClass.economy.toFixed(0)} kg
+                          </Text>
+                        </View>
+                        <View style={styles.seatClassCompareItem}>
+                          <Text style={styles.seatClassCompareLabel}>Business</Text>
+                          <Text style={styles.seatClassCompareValue}>
+                            {flightEmissions.emissionsByClass.business.toFixed(0)} kg
+                          </Text>
+                          <Text style={styles.seatClassCompareMultiplier}>
+                            {(flightEmissions.emissionsByClass.business / flightEmissions.emissionsByClass.economy).toFixed(1)}x
+                          </Text>
+                        </View>
+                        <View style={styles.seatClassCompareItem}>
+                          <Text style={styles.seatClassCompareLabel}>First</Text>
+                          <Text style={styles.seatClassCompareValue}>
+                            {flightEmissions.emissionsByClass.first.toFixed(0)} kg
+                          </Text>
+                          <Text style={styles.seatClassCompareMultiplier}>
+                            {(flightEmissions.emissionsByClass.first / flightEmissions.emissionsByClass.economy).toFixed(1)}x
+                          </Text>
+                        </View>
+                      </View>
+                      
                       <Text style={styles.flightImpactNote}>
-                        💡 Flying produces ~{(parseFloat(manualDuration) * 850 * 0.255 / 8.8).toFixed(1)}x a typical daily carbon budget
+                        💡 This flight produces ~{(flightEmissions.carbonKg / 8.8).toFixed(1)}x a typical daily carbon budget
                       </Text>
                       
                       <TouchableOpacity
@@ -1083,6 +1313,66 @@ export function TransportScreen() {
                         <Text style={styles.saveButtonText}>Save Flight</Text>
                       </TouchableOpacity>
                     </View>
+                  )}
+                  
+                  {/* Fallback: Duration-based entry */}
+                  {!flightEmissions && (
+                    <>
+                      <View style={styles.divider}>
+                        <View style={styles.dividerLine} />
+                        <Text style={styles.dividerText}>OR enter duration</Text>
+                        <View style={styles.dividerLine} />
+                      </View>
+                      
+                      <Text style={styles.inputLabel}>Flight Duration (hours)</Text>
+                      <View style={styles.distanceInputRow}>
+                        <TextInput
+                          style={[styles.textInput, styles.distanceInput]}
+                          placeholder="e.g., 2.5"
+                          placeholderTextColor={Colors.textTertiary}
+                          value={manualDuration}
+                          onChangeText={setManualDuration}
+                          keyboardType="numeric"
+                        />
+                        <Text style={styles.distanceUnit}>hours</Text>
+                      </View>
+                      
+                      {manualDuration && parseFloat(manualDuration) > 0 && (
+                        <View style={styles.flightCalculation}>
+                          <View style={styles.accuracyIndicator}>
+                            <Ionicons name="information-circle" size={16} color={Colors.carbonMedium} />
+                            <Text style={styles.accuracyText}>Estimated (based on duration)</Text>
+                          </View>
+                          <View style={styles.calculationRow}>
+                            <Text style={styles.calculationLabel}>Flight Time</Text>
+                            <Text style={styles.calculationValue}>{parseFloat(manualDuration).toFixed(1)} hours</Text>
+                          </View>
+                          <View style={styles.calculationRow}>
+                            <Text style={styles.calculationLabel}>Est. Distance</Text>
+                            <Text style={styles.calculationValue}>
+                              {(parseFloat(manualDuration) * 850).toFixed(0)} km
+                            </Text>
+                          </View>
+                          <View style={styles.calculationRowHighlight}>
+                            <Text style={styles.calculationLabelBold}>Carbon Footprint</Text>
+                            <Text style={styles.calculationValueBold}>
+                              {(parseFloat(manualDuration) * 850 * 0.255).toFixed(1)} kg CO₂e
+                            </Text>
+                          </View>
+                          <Text style={styles.flightImpactNote}>
+                            💡 Flying produces ~{(parseFloat(manualDuration) * 850 * 0.255 / 8.8).toFixed(1)}x a typical daily carbon budget
+                          </Text>
+                          
+                          <TouchableOpacity
+                            style={styles.saveFlightButton}
+                            onPress={handleSaveFlight}
+                          >
+                            <Ionicons name="airplane" size={20} color={Colors.white} />
+                            <Text style={styles.saveButtonText}>Save Flight</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </>
                   )}
                 </View>
               )}
@@ -2133,6 +2423,19 @@ const styles = StyleSheet.create({
     color: Colors.categoryTransport,
     fontWeight: '600',
     marginLeft: Spacing.sm,
+    flex: 1,
+  },
+  accuracyBadge: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
+  accuracyBadgeText: {
+    ...TextStyles.caption,
+    color: Colors.white,
+    fontSize: 9,
+    fontWeight: '600',
   },
   flightHint: {
     ...TextStyles.bodySmall,
@@ -2140,12 +2443,144 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     lineHeight: 20,
   },
+  
+  // Airport input
+  airportInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  airportInput: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  airportInputField: {
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    ...TextStyles.h3,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    fontWeight: '700',
+    letterSpacing: 2,
+    width: '90%',
+  },
+  airportInputLabel: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    marginTop: Spacing.xs,
+  },
+  
+  // Seat class selector
+  seatClassRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  seatClassButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    marginHorizontal: 2,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.backgroundTertiary,
+  },
+  seatClassButtonActive: {
+    backgroundColor: Colors.primary + '20',
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  seatClassIcon: {
+    fontSize: 20,
+    marginBottom: 2,
+  },
+  seatClassLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    fontSize: 10,
+  },
+  seatClassLabelActive: {
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  
+  // Calculate flight button
+  calculateFlightButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.categoryTransport,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+    marginTop: Spacing.sm,
+  },
+  
+  // Flight calculation result
   flightCalculation: {
     backgroundColor: Colors.backgroundTertiary,
     borderRadius: BorderRadius.base,
     padding: Spacing.base,
     marginTop: Spacing.md,
   },
+  accuracyIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.carbonMediumBg,
+    borderRadius: BorderRadius.sm,
+    alignSelf: 'flex-start',
+  },
+  accuracyHigh: {
+    backgroundColor: Colors.carbonLowBg,
+  },
+  accuracyText: {
+    ...TextStyles.caption,
+    color: Colors.carbonMedium,
+    marginLeft: Spacing.xs,
+    fontWeight: '500',
+  },
+  accuracyTextHigh: {
+    color: Colors.carbonLow,
+  },
+  
+  // Seat class comparison
+  seatClassCompareTitle: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  seatClassCompare: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+  },
+  seatClassCompareItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  seatClassCompareLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    fontSize: 10,
+  },
+  seatClassCompareValue: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '600',
+  },
+  seatClassCompareMultiplier: {
+    ...TextStyles.caption,
+    color: Colors.carbonMedium,
+    fontSize: 9,
+  },
+  
   flightImpactNote: {
     ...TextStyles.bodySmall,
     color: Colors.carbonMedium,
