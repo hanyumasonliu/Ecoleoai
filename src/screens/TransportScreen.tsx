@@ -46,6 +46,8 @@ import {
   formatDistance, 
   formatDuration as formatMapDuration,
   getModeName,
+  searchPlaces,
+  Place,
 } from '../services/maps';
 import { useCarbon } from '../context/CarbonContext';
 import { TransportMode } from '../types/activity';
@@ -94,6 +96,14 @@ export function TransportScreen() {
   const [liveDistance, setLiveDistance] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  
+  // Autocomplete state
+  const [originSuggestions, setOriginSuggestions] = useState<Place[]>([]);
+  const [destSuggestions, setDestSuggestions] = useState<Place[]>([]);
+  const [showOriginSuggestions, setShowOriginSuggestions] = useState(false);
+  const [showDestSuggestions, setShowDestSuggestions] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const { addTransportActivity } = useCarbon();
 
@@ -328,6 +338,80 @@ export function TransportScreen() {
     const hours = Math.floor(minutes / 60);
     const mins = Math.round(minutes % 60);
     return `${hours}h ${mins}m`;
+  };
+
+  /**
+   * Search for origin places (with debounce)
+   */
+  const handleOriginSearch = (text: string) => {
+    setManualOrigin(text);
+    setTripCalculation(null);
+    
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    if (text.length < 3) {
+      setOriginSuggestions([]);
+      setShowOriginSuggestions(false);
+      return;
+    }
+    
+    // Debounce search
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      const places = await searchPlaces(text);
+      setOriginSuggestions(places);
+      setShowOriginSuggestions(places.length > 0);
+      setIsSearching(false);
+    }, 300);
+  };
+
+  /**
+   * Search for destination places (with debounce)
+   */
+  const handleDestinationSearch = (text: string) => {
+    setManualDestination(text);
+    setTripCalculation(null);
+    
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    if (text.length < 3) {
+      setDestSuggestions([]);
+      setShowDestSuggestions(false);
+      return;
+    }
+    
+    // Debounce search
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      const places = await searchPlaces(text);
+      setDestSuggestions(places);
+      setShowDestSuggestions(places.length > 0);
+      setIsSearching(false);
+    }, 300);
+  };
+
+  /**
+   * Select origin from suggestions
+   */
+  const handleSelectOrigin = (place: Place) => {
+    setManualOrigin(place.address);
+    setOriginSuggestions([]);
+    setShowOriginSuggestions(false);
+  };
+
+  /**
+   * Select destination from suggestions
+   */
+  const handleSelectDestination = (place: Place) => {
+    setManualDestination(place.address);
+    setDestSuggestions([]);
+    setShowDestSuggestions(false);
   };
 
   /**
@@ -785,24 +869,89 @@ export function TransportScreen() {
                 </View>
               )}
 
-              {/* Route Input - hide for flights */}
+              {/* Route Input with Autocomplete - hide for flights */}
               {manualMode !== 'plane' && (
                 <>
-                  <Text style={styles.inputLabel}>Route (Optional)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Starting point (e.g., Home, 123 Main St)"
-                    placeholderTextColor={Colors.textTertiary}
-                    value={manualOrigin}
-                    onChangeText={setManualOrigin}
-                  />
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Destination (e.g., Office, Airport)"
-                    placeholderTextColor={Colors.textTertiary}
-                    value={manualDestination}
-                    onChangeText={setManualDestination}
-                  />
+                  <Text style={styles.inputLabel}>Route</Text>
+                  
+                  {/* Origin Input with Autocomplete */}
+                  <View style={styles.autocompleteContainer}>
+                    <View style={styles.inputWithIcon}>
+                      <Ionicons name="location" size={20} color={Colors.primary} style={styles.inputIcon} />
+                      <TextInput
+                        style={styles.autocompleteInput}
+                        placeholder="Starting point (e.g., Home, 123 Main St)"
+                        placeholderTextColor={Colors.textTertiary}
+                        value={manualOrigin}
+                        onChangeText={handleOriginSearch}
+                        onFocus={() => originSuggestions.length > 0 && setShowOriginSuggestions(true)}
+                      />
+                      {isSearching && manualOrigin.length >= 3 && (
+                        <ActivityIndicator size="small" color={Colors.primary} style={styles.searchingIndicator} />
+                      )}
+                    </View>
+                    
+                    {/* Origin Suggestions */}
+                    {showOriginSuggestions && originSuggestions.length > 0 && (
+                      <View style={styles.suggestionsContainer}>
+                        {originSuggestions.slice(0, 4).map((place, index) => (
+                          <TouchableOpacity
+                            key={place.placeId || index}
+                            style={styles.suggestionItem}
+                            onPress={() => handleSelectOrigin(place)}
+                          >
+                            <Ionicons name="location-outline" size={16} color={Colors.textSecondary} />
+                            <View style={styles.suggestionTextContainer}>
+                              <Text style={styles.suggestionName} numberOfLines={1}>{place.name}</Text>
+                              <Text style={styles.suggestionAddress} numberOfLines={1}>{place.address}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                  
+                  {/* Destination Input with Autocomplete */}
+                  <View style={styles.autocompleteContainer}>
+                    <View style={styles.inputWithIcon}>
+                      <Ionicons name="flag" size={20} color={Colors.carbonHigh} style={styles.inputIcon} />
+                      <TextInput
+                        style={styles.autocompleteInput}
+                        placeholder="Destination (e.g., Office, Airport)"
+                        placeholderTextColor={Colors.textTertiary}
+                        value={manualDestination}
+                        onChangeText={handleDestinationSearch}
+                        onFocus={() => destSuggestions.length > 0 && setShowDestSuggestions(true)}
+                      />
+                      {isSearching && manualDestination.length >= 3 && (
+                        <ActivityIndicator size="small" color={Colors.primary} style={styles.searchingIndicator} />
+                      )}
+                    </View>
+                    
+                    {/* Destination Suggestions */}
+                    {showDestSuggestions && destSuggestions.length > 0 && (
+                      <View style={styles.suggestionsContainer}>
+                        {destSuggestions.slice(0, 4).map((place, index) => (
+                          <TouchableOpacity
+                            key={place.placeId || index}
+                            style={styles.suggestionItem}
+                            onPress={() => handleSelectDestination(place)}
+                          >
+                            <Ionicons name="location-outline" size={16} color={Colors.textSecondary} />
+                            <View style={styles.suggestionTextContainer}>
+                              <Text style={styles.suggestionName} numberOfLines={1}>{place.name}</Text>
+                              <Text style={styles.suggestionAddress} numberOfLines={1}>{place.address}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                  
+                  {/* Powered by Google badge */}
+                  <View style={styles.poweredByGoogle}>
+                    <Text style={styles.poweredByText}>Powered by Google Maps</Text>
+                  </View>
                 </>
               )}
               
@@ -1364,6 +1513,76 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     marginBottom: Spacing.sm,
   },
+  
+  // Autocomplete styles
+  autocompleteContainer: {
+    marginBottom: Spacing.sm,
+    zIndex: 10,
+  },
+  inputWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    paddingHorizontal: Spacing.sm,
+  },
+  inputIcon: {
+    marginRight: Spacing.sm,
+  },
+  autocompleteInput: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+  },
+  searchingIndicator: {
+    marginLeft: Spacing.sm,
+  },
+  suggestionsContainer: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.base,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.base,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  suggestionTextContainer: {
+    flex: 1,
+    marginLeft: Spacing.sm,
+  },
+  suggestionName: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  suggestionAddress: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  poweredByGoogle: {
+    alignItems: 'flex-end',
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.md,
+  },
+  poweredByText: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    fontSize: 10,
+  },
+  
   modeScrollView: {
     marginBottom: Spacing.md,
   },
