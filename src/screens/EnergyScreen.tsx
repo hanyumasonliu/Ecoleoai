@@ -53,6 +53,37 @@ const EMISSION_FACTORS = {
 };
 
 /**
+ * Average daily usage benchmarks (for eco score calculation)
+ * Based on US household averages
+ */
+const DAILY_BENCHMARKS = {
+  electricity: 30, // kWh/day average US household
+  natural_gas: 3.5, // m³/day average
+  heating_oil: 3.3, // liters/day average (heating season)
+};
+
+/**
+ * Calculate eco score based on usage vs benchmark
+ * Score: 100 = excellent (50% of average), 0 = very high (200%+ of average)
+ */
+const calculateEcoScore = (
+  type: keyof typeof DAILY_BENCHMARKS,
+  dailyUsage: number
+): number => {
+  const benchmark = DAILY_BENCHMARKS[type];
+  const ratio = dailyUsage / benchmark;
+  
+  // Score decreases as usage increases
+  // 50% of average = 100 score
+  // 100% of average = 75 score
+  // 150% of average = 50 score
+  // 200% of average = 25 score
+  // 250%+ of average = 0 score
+  const score = Math.round(100 - (ratio - 0.5) * 50);
+  return Math.max(0, Math.min(100, score));
+};
+
+/**
  * Energy types for selection
  */
 const ENERGY_TYPES = [
@@ -155,10 +186,26 @@ export function EnergyScreen() {
     }
 
     const carbonKg = calculateCarbon(selectedType, amountNum);
-    // For periodic entries, calculate daily equivalent
-    const dailyCarbonKg = period === 'daily' ? carbonKg : 
-                          period === 'weekly' ? carbonKg / 7 : carbonKg / 30;
     const typeInfo = ENERGY_TYPES.find(t => t.type === selectedType)!;
+    
+    // Calculate daily equivalents
+    const periodDays = period === 'daily' ? 1 : period === 'weekly' ? 7 : 30;
+    const dailyCarbonKg = carbonKg / periodDays;
+    const dailyUsage = amountNum / periodDays;
+    
+    // Calculate eco score based on daily usage vs benchmark
+    const ecoScore = calculateEcoScore(selectedType, dailyUsage);
+    
+    // Get benchmark comparison text
+    const benchmark = DAILY_BENCHMARKS[selectedType];
+    const percentOfBenchmark = Math.round((dailyUsage / benchmark) * 100);
+    const comparisonText = percentOfBenchmark <= 50 
+      ? 'Excellent! Well below average'
+      : percentOfBenchmark <= 100 
+        ? 'Good - below or at average'
+        : percentOfBenchmark <= 150
+          ? 'Above average'
+          : 'High usage - consider reducing';
 
     const newLog: EnergyLog = {
       id: `energy_${Date.now()}`,
@@ -174,17 +221,24 @@ export function EnergyScreen() {
     saveLogs(newLogs);
     
     // Also save to CarbonContext for Journey display
+    // Note: Monthly/weekly entries add their DAILY AVERAGE to today's log
+    // This represents the daily share of ongoing energy consumption
     try {
       await addEnergyActivity({
-        name: `${typeInfo.label} (${period})`,
-        carbonKg: dailyCarbonKg, // Use daily equivalent
+        name: period === 'daily' 
+          ? `${typeInfo.label}` 
+          : `${typeInfo.label} (${period} avg)`,
+        carbonKg: dailyCarbonKg, // Daily equivalent added to today
         energyType: selectedType,
-        energyKwh: selectedType === 'electricity' ? amountNum : amountNum * 10, // Convert to kWh equivalent
-        quantity: amountNum,
-        unit: typeInfo.unit,
+        energyKwh: selectedType === 'electricity' ? dailyUsage : dailyUsage * 10,
+        quantity: dailyUsage, // Daily equivalent usage
+        unit: `${typeInfo.unit}/day`,
         period: period,
-        isEstimated: true,
-        ecoScore: Math.max(0, 100 - Math.round(dailyCarbonKg * 5)),
+        isEstimated: period !== 'daily', // Mark as estimated if from monthly/weekly
+        ecoScore: ecoScore,
+        notes: period !== 'daily' 
+          ? `Based on ${amountNum} ${typeInfo.unit} ${period}` 
+          : undefined,
       });
     } catch (error) {
       console.error('Error adding to carbon context:', error);
@@ -195,7 +249,12 @@ export function EnergyScreen() {
     
     Alert.alert(
       '✅ Energy Logged',
-      `${amountNum} ${typeInfo.unit} of ${typeInfo.label.toLowerCase()} = ${carbonKg.toFixed(2)} kg CO₂e total (${dailyCarbonKg.toFixed(2)} kg/day)`
+      `📊 ${period.charAt(0).toUpperCase() + period.slice(1)} Total: ${amountNum} ${typeInfo.unit}\n` +
+      `🌍 Total CO₂e: ${carbonKg.toFixed(2)} kg\n\n` +
+      `📅 Daily Average: ${dailyUsage.toFixed(1)} ${typeInfo.unit}/day\n` +
+      `🌍 Daily CO₂e: ${dailyCarbonKg.toFixed(2)} kg/day\n\n` +
+      `📈 Eco Score: ${ecoScore}/100\n` +
+      `${comparisonText} (${percentOfBenchmark}% of avg household)`
     );
   };
 
