@@ -65,7 +65,7 @@ interface CarbonContextType {
   addProductScan: (objects: AnalyzedObject[], date?: string) => Promise<void>;
   addTransportActivity: (trip: Omit<TransportActivity, 'id' | 'timestamp' | 'category'>) => Promise<void>;
   addFoodActivity: (food: Omit<FoodActivity, 'id' | 'timestamp' | 'category'>) => Promise<void>;
-  addEnergyActivity: (energy: Omit<EnergyActivity, 'id' | 'timestamp' | 'category'>) => Promise<void>;
+  addEnergyActivity: (energy: Omit<EnergyActivity, 'id' | 'timestamp' | 'category'>) => Promise<string>;
   removeActivity: (activityId: string, date?: string) => Promise<void>;
   
   // Scan history
@@ -137,7 +137,7 @@ const defaultContext: CarbonContextType = {
   addProductScan: async () => {},
   addTransportActivity: async () => {},
   addFoodActivity: async () => {},
-  addEnergyActivity: async () => {},
+  addEnergyActivity: async () => '',
   removeActivity: async () => {},
   scanHistory: [],
   getScansForSelectedDate: () => [],
@@ -361,17 +361,52 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
   }, [addActivity]);
 
   /**
-   * Add energy activity
+   * Add energy activity - returns the activity ID for tracking
    */
   const addEnergyActivity = useCallback(async (
     energy: Omit<EnergyActivity, 'id' | 'timestamp' | 'category'>
-  ) => {
+  ): Promise<string> => {
     const activity: Omit<EnergyActivity, 'id' | 'timestamp'> = {
       ...energy,
       category: 'energy',
     };
-    await addActivity(activity);
-  }, [addActivity]);
+    const createdActivity = await dataLayerAddActivity(
+      activity,
+      todayString,
+      settings.goals.dailyBudgetKg
+    );
+    
+    // Update local state
+    setDailyLogs(prev => {
+      const currentLog = prev[todayString] || {
+        date: todayString,
+        activities: [],
+        totalCarbonKg: 0,
+        budgetKg: settings.goals.dailyBudgetKg,
+        categoryTotals: { food: 0, transport: 0, product: 0, energy: 0 },
+      };
+      
+      const newActivities = [createdActivity, ...currentLog.activities];
+      const totalCarbonKg = newActivities.reduce((sum, a) => sum + a.carbonKg, 0);
+      
+      return {
+        ...prev,
+        [todayString]: {
+          ...currentLog,
+          activities: newActivities,
+          totalCarbonKg,
+          categoryTotals: {
+            food: newActivities.filter(a => a.category === 'food').reduce((sum, a) => sum + a.carbonKg, 0),
+            transport: newActivities.filter(a => a.category === 'transport').reduce((sum, a) => sum + a.carbonKg, 0),
+            product: newActivities.filter(a => a.category === 'product').reduce((sum, a) => sum + a.carbonKg, 0),
+            energy: newActivities.filter(a => a.category === 'energy').reduce((sum, a) => sum + a.carbonKg, 0),
+          },
+        },
+      };
+    });
+    
+    return createdActivity.id;
+  }, [todayString, settings.goals.dailyBudgetKg]);
 
   /**
    * Remove an activity

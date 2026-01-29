@@ -34,6 +34,7 @@ const STORAGE_KEY = '@greensense_energy_logs';
  */
 interface EnergyLog {
   id: string;
+  activityId?: string; // ID in CarbonContext for deletion sync
   date: string;
   type: 'electricity' | 'natural_gas' | 'heating_oil';
   amount: number; // kWh for electricity, m³ for gas, liters for oil
@@ -123,7 +124,7 @@ const PERIODS = [
  * EnergyScreen Component
  */
 export function EnergyScreen() {
-  const { addEnergyActivity } = useCarbon();
+  const { addEnergyActivity, removeActivity } = useCarbon();
   const [selectedType, setSelectedType] = useState<'electricity' | 'natural_gas' | 'heating_oil'>('electricity');
   const [amount, setAmount] = useState('');
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
@@ -207,24 +208,12 @@ export function EnergyScreen() {
           ? 'Above average'
           : 'High usage - consider reducing';
 
-    const newLog: EnergyLog = {
-      id: `energy_${Date.now()}`,
-      date: new Date().toISOString(),
-      type: selectedType,
-      amount: amountNum,
-      unit: typeInfo.unit,
-      carbonKg,
-      period,
-    };
-
-    const newLogs = [newLog, ...logs];
-    saveLogs(newLogs);
-    
-    // Also save to CarbonContext for Journey display
+    // Save to CarbonContext for Journey display first to get the activity ID
     // Note: Monthly/weekly entries add their DAILY AVERAGE to today's log
     // This represents the daily share of ongoing energy consumption
+    let activityId: string | undefined;
     try {
-      await addEnergyActivity({
+      activityId = await addEnergyActivity({
         name: period === 'daily' 
           ? `${typeInfo.label}` 
           : `${typeInfo.label} (${period} avg)`,
@@ -243,6 +232,21 @@ export function EnergyScreen() {
     } catch (error) {
       console.error('Error adding to carbon context:', error);
     }
+
+    // Save to local energy logs (with reference to CarbonContext activity)
+    const newLog: EnergyLog = {
+      id: `energy_${Date.now()}`,
+      activityId: activityId, // Link to CarbonContext for deletion
+      date: new Date().toISOString(),
+      type: selectedType,
+      amount: amountNum,
+      unit: typeInfo.unit,
+      carbonKg,
+      period,
+    };
+
+    const newLogs = [newLog, ...logs];
+    saveLogs(newLogs);
     
     setAmount('');
     setShowForm(false);
@@ -259,20 +263,33 @@ export function EnergyScreen() {
   };
 
   /**
-   * Delete log
+   * Delete log - removes from both local storage and CarbonContext
    */
-  const handleDeleteLog = (logId: string) => {
+  const handleDeleteLog = (log: EnergyLog) => {
     Alert.alert(
-      'Delete Log',
-      'Are you sure you want to delete this entry?',
+      'Delete Energy Log',
+      `Delete ${log.amount} ${log.unit} ${ENERGY_TYPES.find(t => t.type === log.type)?.label}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            const newLogs = logs.filter(l => l.id !== logId);
+          onPress: async () => {
+            // Remove from local energy logs
+            const newLogs = logs.filter(l => l.id !== log.id);
             saveLogs(newLogs);
+            
+            // Also remove from CarbonContext (Journey) if we have the activity ID
+            if (log.activityId) {
+              try {
+                const logDate = new Date(log.date).toISOString().split('T')[0];
+                await removeActivity(log.activityId, logDate);
+              } catch (error) {
+                console.error('Error removing from carbon context:', error);
+              }
+            }
+            
+            Alert.alert('Deleted', 'Energy log has been removed.');
           },
         },
       ]
@@ -431,12 +448,9 @@ export function EnergyScreen() {
             {logs.length > 0 ? (
               logs.map(log => {
                 const typeInfo = ENERGY_TYPES.find(t => t.type === log.type)!;
+                const dailyCarbon = getDailyCarbon(log);
                 return (
-                  <TouchableOpacity
-                    key={log.id}
-                    style={styles.logCard}
-                    onLongPress={() => handleDeleteLog(log.id)}
-                  >
+                  <View key={log.id} style={styles.logCard}>
                     <View style={[styles.logIcon, { backgroundColor: typeInfo.color + '20' }]}>
                       <Ionicons name={typeInfo.icon as any} size={20} color={typeInfo.color} />
                     </View>
@@ -445,13 +459,22 @@ export function EnergyScreen() {
                         {log.amount} {log.unit} • {typeInfo.label}
                       </Text>
                       <Text style={styles.logSubtitle}>
-                        {log.carbonKg.toFixed(2)} kg CO₂e ({log.period})
+                        {log.carbonKg.toFixed(2)} kg CO₂e total ({log.period})
+                      </Text>
+                      <Text style={styles.logSubtitle}>
+                        {dailyCarbon.toFixed(2)} kg CO₂e/day
                       </Text>
                       <Text style={styles.logDate}>
                         {new Date(log.date).toLocaleDateString()}
                       </Text>
                     </View>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteButton}
+                      onPress={() => handleDeleteLog(log)}
+                    >
+                      <Ionicons name="trash-outline" size={20} color={Colors.carbonHigh} />
+                    </TouchableOpacity>
+                  </View>
                 );
               })
             ) : (
@@ -701,6 +724,11 @@ const styles = StyleSheet.create({
     ...TextStyles.caption,
     color: Colors.textTertiary,
     marginTop: 4,
+  },
+  deleteButton: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    marginLeft: Spacing.sm,
   },
   
   // Empty state
