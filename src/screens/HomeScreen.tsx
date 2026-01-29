@@ -2,10 +2,10 @@
  * GreenSense AR - Home Screen
  * 
  * Main dashboard showing daily carbon budget, category breakdown,
- * and recent activity.
+ * and recent activity. Shows data for the selected date.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -17,8 +17,9 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useHistory } from '../context/HistoryContext';
-import { Colors, Spacing, BorderRadius, TextStyles, Shadows } from '../theme';
+import { useCarbon } from '../context/CarbonContext';
+import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
+import { getDateString } from '../services/dataLayer';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -26,12 +27,9 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CATEGORIES = [
   { key: 'food', name: 'Food', icon: 'restaurant-outline' as const, color: '#3B82F6' },
   { key: 'transport', name: 'Transport', icon: 'car-outline' as const, color: '#F59E0B' },
-  { key: 'products', name: 'Products', icon: 'cube-outline' as const, color: '#8B5CF6' },
+  { key: 'product', name: 'Products', icon: 'cube-outline' as const, color: '#8B5CF6' },
   { key: 'energy', name: 'Energy', icon: 'flash-outline' as const, color: '#EAB308' },
 ];
-
-// Days of week for calendar
-const WEEK_DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 /**
  * Get dates for current week
@@ -56,24 +54,49 @@ const getWeekDates = () => {
  * Main dashboard with carbon budget and activity overview.
  */
 export function HomeScreen() {
-  const { history, summary } = useHistory();
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  const { 
+    selectedDate,
+    setSelectedDate,
+    selectedDateLog,
+    selectedDateRemainingBudget,
+    selectedDateIsOverBudget,
+    selectedDateBudgetProgress,
+    selectedDateCategoryTotals,
+    getScansForSelectedDate,
+    settings,
+    weeklySummary,
+  } = useCarbon();
   
   const weekDates = getWeekDates();
   const today = new Date();
-  const dailyBudget = 8; // kg CO₂e - will be from settings later
-  const usedCarbon = summary.totalCarbonKg;
-  const remainingCarbon = Math.max(0, dailyBudget - usedCarbon);
-  const isOverBudget = usedCarbon > dailyBudget;
-  const budgetProgress = Math.min(usedCarbon / dailyBudget, 1);
+  const todayString = getDateString(today);
+  const selectedDateString = getDateString(selectedDate);
+  const isToday = selectedDateString === todayString;
   
-  // Calculate streak (mock for now)
-  const streak = history.length > 0 ? Math.min(history.length, 7) : 0;
+  const dailyBudget = settings.goals.dailyBudgetKg;
+  const usedCarbon = selectedDateLog.totalCarbonKg;
+  const remainingCarbon = selectedDateRemainingBudget;
+  const isOverBudget = selectedDateIsOverBudget;
+  const budgetProgress = selectedDateBudgetProgress;
+  
+  // Get activities for selected date
+  const selectedDateActivities = selectedDateLog.activities;
+  const selectedDateScans = getScansForSelectedDate();
+  
+  // Calculate streak from weekly summary
+  const streak = weeklySummary?.daysUnderBudget || 0;
 
   // Format carbon for display
   const formatCarbon = (kg: number) => {
     if (kg >= 1000) return `${(kg / 1000).toFixed(1)}t`;
     return `${kg.toFixed(1)}kg`;
+  };
+
+  // Format date for display
+  const formatDateHeader = () => {
+    if (isToday) return 'Today';
+    const options: Intl.DateTimeFormatOptions = { weekday: 'long', month: 'short', day: 'numeric' };
+    return selectedDate.toLocaleDateString('en-US', options);
   };
 
   return (
@@ -102,25 +125,37 @@ export function HomeScreen() {
         {/* Week Calendar */}
         <View style={styles.weekCalendar}>
           {weekDates.map((date, index) => {
-            const isToday = date.toDateString() === today.toDateString();
-            const isSelected = date.toDateString() === selectedDate.toDateString();
+            const dateStr = getDateString(date);
+            const isDateToday = dateStr === todayString;
+            const isSelected = dateStr === selectedDateString;
+            const isFuture = date > today;
+            
             return (
               <TouchableOpacity
                 key={index}
                 style={[
                   styles.dayButton,
                   isSelected && styles.dayButtonSelected,
+                  isFuture && styles.dayButtonFuture,
                 ]}
-                onPress={() => setSelectedDate(date)}
+                onPress={() => !isFuture && setSelectedDate(date)}
+                disabled={isFuture}
               >
-                <Text style={[styles.dayNumber, isSelected && styles.dayNumberSelected]}>
+                <Text style={[
+                  styles.dayNumber, 
+                  isSelected && styles.dayNumberSelected,
+                  isFuture && styles.dayNumberFuture,
+                ]}>
                   {date.getDate()}
                 </Text>
-                {isToday && <View style={styles.todayDot} />}
+                {isDateToday && <View style={styles.todayDot} />}
               </TouchableOpacity>
             );
           })}
         </View>
+
+        {/* Date Header */}
+        <Text style={styles.dateHeader}>{formatDateHeader()}</Text>
 
         {/* Main Carbon Budget Card */}
         <View style={styles.budgetCard}>
@@ -168,9 +203,9 @@ export function HomeScreen() {
         {/* Category Breakdown */}
         <View style={styles.categoryGrid}>
           {CATEGORIES.map((category) => {
-            // For now, all carbon goes to products (from scans)
-            const categoryCarbon = category.key === 'products' ? usedCarbon : 0;
-            const categoryProgress = categoryCarbon / (dailyBudget / 4);
+            const categoryKey = category.key as keyof typeof selectedDateCategoryTotals;
+            const categoryCarbon = selectedDateCategoryTotals[categoryKey] || 0;
+            const categoryProgress = Math.min(categoryCarbon / (dailyBudget / 4), 1);
             
             return (
               <View key={category.key} style={styles.categoryCard}>
@@ -188,7 +223,7 @@ export function HomeScreen() {
                         borderColor: category.color,
                         borderRightColor: 'transparent',
                         borderBottomColor: categoryProgress > 0.5 ? category.color : 'transparent',
-                        transform: [{ rotate: `${Math.min(categoryProgress, 1) * 180}deg` }],
+                        transform: [{ rotate: `${categoryProgress * 180}deg` }],
                       }
                     ]} 
                   />
@@ -206,7 +241,7 @@ export function HomeScreen() {
           <TouchableOpacity style={styles.offsetCard}>
             <Ionicons name="add-circle" size={20} color={Colors.carbonLow} />
             <Text style={styles.offsetText}>
-              Offset remaining: Plant {Math.ceil(usedCarbon / 20)} trees
+              Offset {isToday ? 'today' : 'this day'}: Plant {Math.ceil(usedCarbon / 20)} trees
             </Text>
             <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
@@ -215,37 +250,45 @@ export function HomeScreen() {
         {/* Recent Activity */}
         <View style={styles.activitySection}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Activity</Text>
+            <Text style={styles.sectionTitle}>
+              {isToday ? 'Recent Activity' : `Activity on ${selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+            </Text>
             <TouchableOpacity>
               <Ionicons name="bookmark-outline" size={20} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>
           
-          {history.length > 0 ? (
-            history.slice(0, 3).map((scan) => (
-              <View key={scan.id} style={styles.activityCard}>
-                <View style={styles.activityThumbnail}>
-                  <Ionicons name="cube" size={24} color={Colors.textTertiary} />
+          {selectedDateActivities.length > 0 ? (
+            selectedDateActivities.slice(0, 5).map((activity) => (
+              <View key={activity.id} style={styles.activityCard}>
+                <View style={[
+                  styles.activityThumbnail,
+                  { backgroundColor: getCategoryColor(activity.category) + '20' }
+                ]}>
+                  <Ionicons 
+                    name={getCategoryIcon(activity.category)} 
+                    size={24} 
+                    color={getCategoryColor(activity.category)} 
+                  />
                 </View>
                 <View style={styles.activityInfo}>
                   <Text style={styles.activityName} numberOfLines={1}>
-                    {scan.objects.map(o => o.name).slice(0, 2).join(', ')}
-                    {scan.objects.length > 2 && ` +${scan.objects.length - 2} more`}
+                    {activity.name}
                   </Text>
                   <View style={styles.activityMeta}>
                     <Ionicons name="leaf" size={12} color={Colors.carbonMedium} />
                     <Text style={styles.activityCarbon}>
-                      {scan.totalCarbonKg.toFixed(1)} kg CO₂e
+                      {activity.carbonKg.toFixed(1)} kg CO₂e
                     </Text>
                   </View>
                   <View style={styles.activityDetails}>
                     <Text style={styles.activityDetail}>
-                      {scan.objects.length} items
+                      {activity.category.charAt(0).toUpperCase() + activity.category.slice(1)}
                     </Text>
                   </View>
                 </View>
                 <Text style={styles.activityTime}>
-                  {new Date(scan.timestamp).toLocaleTimeString('en-US', {
+                  {new Date(activity.timestamp).toLocaleTimeString('en-US', {
                     hour: 'numeric',
                     minute: '2-digit',
                   })}
@@ -256,7 +299,7 @@ export function HomeScreen() {
             <View style={styles.emptyActivity}>
               <Ionicons name="scan-outline" size={32} color={Colors.textTertiary} />
               <Text style={styles.emptyActivityText}>
-                No activity yet. Start scanning!
+                {isToday ? 'No activity yet. Start scanning!' : 'No activity recorded for this day.'}
               </Text>
             </View>
           )}
@@ -264,6 +307,27 @@ export function HomeScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+// Helper functions for category styling
+function getCategoryIcon(category: string): keyof typeof Ionicons.glyphMap {
+  switch (category) {
+    case 'food': return 'restaurant-outline';
+    case 'transport': return 'car-outline';
+    case 'product': return 'cube-outline';
+    case 'energy': return 'flash-outline';
+    default: return 'ellipse-outline';
+  }
+}
+
+function getCategoryColor(category: string): string {
+  switch (category) {
+    case 'food': return '#3B82F6';
+    case 'transport': return '#F59E0B';
+    case 'product': return '#8B5CF6';
+    case 'energy': return '#EAB308';
+    default: return Colors.textSecondary;
+  }
 }
 
 const CATEGORY_CARD_WIDTH = (SCREEN_WIDTH - Spacing.base * 2 - Spacing.sm * 3) / 4;
@@ -315,7 +379,7 @@ const styles = StyleSheet.create({
   weekCalendar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: Spacing.base,
+    marginBottom: Spacing.md,
   },
   dayButton: {
     width: 40,
@@ -329,6 +393,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.primary,
   },
+  dayButtonFuture: {
+    opacity: 0.4,
+  },
   dayNumber: {
     ...TextStyles.body,
     color: Colors.textSecondary,
@@ -338,12 +405,22 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontWeight: '700',
   },
+  dayNumberFuture: {
+    color: Colors.textTertiary,
+  },
   todayDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
     backgroundColor: Colors.primary,
     marginTop: 4,
+  },
+  
+  // Date header
+  dateHeader: {
+    ...TextStyles.h4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
   },
   
   // Budget card
@@ -547,8 +624,8 @@ const styles = StyleSheet.create({
     ...TextStyles.body,
     color: Colors.textTertiary,
     marginTop: Spacing.sm,
+    textAlign: 'center',
   },
 });
 
 export default HomeScreen;
-

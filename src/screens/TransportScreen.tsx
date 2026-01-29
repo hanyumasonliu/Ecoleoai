@@ -20,6 +20,7 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -37,6 +38,14 @@ import {
   calculateTripCarbon,
 } from '../services/location';
 import { sendTripConfirmation } from '../services/notifications';
+import { 
+  calculateTrip, 
+  TripCalculation, 
+  formatDistance, 
+  formatDuration as formatMapDuration,
+  getModeName,
+} from '../services/maps';
+import { useCarbon } from '../context/CarbonContext';
 import { TransportMode } from '../types/activity';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
 
@@ -67,6 +76,17 @@ export function TransportScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
+  
+  // Manual entry state
+  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [manualOrigin, setManualOrigin] = useState('');
+  const [manualDestination, setManualDestination] = useState('');
+  const [manualMode, setManualMode] = useState<TransportMode>('car');
+  const [manualDistance, setManualDistance] = useState('');
+  const [tripCalculation, setTripCalculation] = useState<TripCalculation | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
+  
+  const { addTransportActivity } = useCarbon();
 
   /**
    * Load data
@@ -213,6 +233,106 @@ export function TransportScreen() {
   };
 
   /**
+   * Calculate manual trip
+   */
+  const handleCalculateTrip = async () => {
+    if (!manualOrigin.trim() || !manualDestination.trim()) {
+      Alert.alert('Missing Information', 'Please enter both origin and destination.');
+      return;
+    }
+
+    setIsCalculating(true);
+    try {
+      const result = await calculateTrip(manualOrigin, manualDestination, manualMode);
+      setTripCalculation(result);
+    } catch (error) {
+      console.error('Error calculating trip:', error);
+      Alert.alert('Calculation Error', 'Could not calculate route. Please try again.');
+    } finally {
+      setIsCalculating(false);
+    }
+  };
+
+  /**
+   * Save manual trip
+   */
+  const handleSaveManualTrip = async () => {
+    if (!tripCalculation) return;
+
+    try {
+      await addTransportActivity({
+        name: `${tripCalculation.route.startAddress.split(',')[0]} → ${tripCalculation.route.endAddress.split(',')[0]}`,
+        carbonKg: tripCalculation.carbonKg,
+        mode: manualMode,
+        distanceKm: tripCalculation.route.distanceKm,
+        durationMinutes: tripCalculation.route.durationMinutes,
+        startLocation: tripCalculation.route.startAddress,
+        endLocation: tripCalculation.route.endAddress,
+        quantity: tripCalculation.route.distanceKm,
+        unit: 'km',
+        ecoScore: Math.max(0, 100 - Math.round(tripCalculation.carbonKg * 10)),
+      });
+
+      Alert.alert('Trip Saved', `${tripCalculation.carbonKg.toFixed(2)} kg CO₂e added to your journey.`);
+      
+      // Reset manual entry
+      setShowManualEntry(false);
+      setManualOrigin('');
+      setManualDestination('');
+      setTripCalculation(null);
+      
+      // Refresh data
+      await loadData();
+    } catch (error) {
+      console.error('Error saving trip:', error);
+      Alert.alert('Error', 'Could not save trip. Please try again.');
+    }
+  };
+
+  /**
+   * Save trip with custom distance
+   */
+  const handleSaveCustomTrip = async () => {
+    const distance = parseFloat(manualDistance);
+    if (isNaN(distance) || distance <= 0) {
+      Alert.alert('Invalid Distance', 'Please enter a valid distance in km.');
+      return;
+    }
+
+    const carbonKg = calculateTripCarbon(distance, manualMode);
+    const duration = (distance / 40) * 60; // Estimate duration
+
+    try {
+      await addTransportActivity({
+        name: `${manualMode === 'car' ? 'Car' : getModeName(manualMode)} trip - ${distance} km`,
+        carbonKg,
+        mode: manualMode,
+        distanceKm: distance,
+        durationMinutes: duration,
+        startLocation: manualOrigin || 'Custom trip',
+        endLocation: manualDestination || undefined,
+        quantity: distance,
+        unit: 'km',
+        ecoScore: Math.max(0, 100 - Math.round(carbonKg * 10)),
+      });
+
+      Alert.alert('Trip Saved', `${carbonKg.toFixed(2)} kg CO₂e added to your journey.`);
+      
+      // Reset
+      setShowManualEntry(false);
+      setManualOrigin('');
+      setManualDestination('');
+      setManualDistance('');
+      setTripCalculation(null);
+      
+      await loadData();
+    } catch (error) {
+      console.error('Error saving trip:', error);
+      Alert.alert('Error', 'Could not save trip. Please try again.');
+    }
+  };
+
+  /**
    * Get mode info
    */
   const getModeInfo = (mode: TransportMode) => {
@@ -325,6 +445,16 @@ export function TransportScreen() {
           )}
         </View>
 
+        {/* Manual Entry Button */}
+        <TouchableOpacity
+          style={styles.manualEntryButton}
+          onPress={() => setShowManualEntry(true)}
+        >
+          <Ionicons name="add-circle" size={24} color={Colors.primary} />
+          <Text style={styles.manualEntryText}>Add Trip Manually</Text>
+          <Ionicons name="chevron-forward" size={20} color={Colors.textTertiary} />
+        </TouchableOpacity>
+
         {/* Unconfirmed Trips */}
         {unconfirmedTrips.length > 0 && (
           <View style={styles.section}>
@@ -393,6 +523,155 @@ export function TransportScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Manual Entry Modal */}
+      {showManualEntry && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.manualEntryModal}>
+            <View style={styles.manualEntryHeader}>
+              <Text style={styles.modalTitle}>Add Trip</Text>
+              <TouchableOpacity onPress={() => {
+                setShowManualEntry(false);
+                setTripCalculation(null);
+                setManualOrigin('');
+                setManualDestination('');
+                setManualDistance('');
+              }}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.manualEntryContent} showsVerticalScrollIndicator={false}>
+              {/* Transport Mode Selector */}
+              <Text style={styles.inputLabel}>Transport Mode</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeScrollView}>
+                {TRANSPORT_MODES.slice(0, 7).map(({ mode, label, emoji }) => (
+                  <TouchableOpacity
+                    key={mode}
+                    style={[
+                      styles.manualModeButton,
+                      manualMode === mode && styles.manualModeButtonActive,
+                    ]}
+                    onPress={() => setManualMode(mode)}
+                  >
+                    <Text style={styles.manualModeEmoji}>{emoji}</Text>
+                    <Text style={[
+                      styles.manualModeLabel,
+                      manualMode === mode && styles.manualModeLabelActive,
+                    ]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Route Input */}
+              <Text style={styles.inputLabel}>Route (Optional)</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Starting point (e.g., Home, 123 Main St)"
+                placeholderTextColor={Colors.textTertiary}
+                value={manualOrigin}
+                onChangeText={setManualOrigin}
+              />
+              <TextInput
+                style={styles.textInput}
+                placeholder="Destination (e.g., Office, Airport)"
+                placeholderTextColor={Colors.textTertiary}
+                value={manualDestination}
+                onChangeText={setManualDestination}
+              />
+
+              {/* Calculate Button */}
+              {manualOrigin && manualDestination && (
+                <TouchableOpacity
+                  style={styles.calculateButton}
+                  onPress={handleCalculateTrip}
+                  disabled={isCalculating}
+                >
+                  {isCalculating ? (
+                    <ActivityIndicator color={Colors.white} />
+                  ) : (
+                    <>
+                      <Ionicons name="navigate" size={20} color={Colors.white} />
+                      <Text style={styles.calculateButtonText}>Calculate Route</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {/* Trip Calculation Result */}
+              {tripCalculation && (
+                <View style={styles.calculationResult}>
+                  <View style={styles.calculationRow}>
+                    <Text style={styles.calculationLabel}>Distance</Text>
+                    <Text style={styles.calculationValue}>{formatDistance(tripCalculation.route.distanceKm)}</Text>
+                  </View>
+                  <View style={styles.calculationRow}>
+                    <Text style={styles.calculationLabel}>Duration</Text>
+                    <Text style={styles.calculationValue}>{formatMapDuration(tripCalculation.route.durationMinutes)}</Text>
+                  </View>
+                  <View style={styles.calculationRowHighlight}>
+                    <Text style={styles.calculationLabelBold}>Carbon Footprint</Text>
+                    <Text style={styles.calculationValueBold}>{tripCalculation.carbonKg.toFixed(2)} kg CO₂e</Text>
+                  </View>
+
+                  {/* Alternatives */}
+                  <Text style={styles.alternativesTitle}>Greener Alternatives</Text>
+                  {tripCalculation.alternativeModes.slice(0, 3).map(alt => (
+                    <View key={alt.mode} style={styles.alternativeRow}>
+                      <Text style={styles.alternativeMode}>{getModeName(alt.mode)}</Text>
+                      <Text style={styles.alternativeCarbon}>{alt.carbonKg.toFixed(2)} kg</Text>
+                      <Text style={styles.alternativeDuration}>{formatMapDuration(alt.durationMinutes)}</Text>
+                    </View>
+                  ))}
+
+                  <TouchableOpacity
+                    style={styles.saveButton}
+                    onPress={handleSaveManualTrip}
+                  >
+                    <Ionicons name="checkmark-circle" size={20} color={Colors.white} />
+                    <Text style={styles.saveButtonText}>Save Trip</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Or enter distance manually */}
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>OR</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              <Text style={styles.inputLabel}>Enter Distance Manually</Text>
+              <View style={styles.distanceInputRow}>
+                <TextInput
+                  style={[styles.textInput, styles.distanceInput]}
+                  placeholder="0.0"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={manualDistance}
+                  onChangeText={setManualDistance}
+                  keyboardType="numeric"
+                />
+                <Text style={styles.distanceUnit}>km</Text>
+              </View>
+
+              {manualDistance && parseFloat(manualDistance) > 0 && (
+                <View style={styles.quickCalculation}>
+                  <Text style={styles.quickCalculationText}>
+                    Estimated: {calculateTripCarbon(parseFloat(manualDistance), manualMode).toFixed(2)} kg CO₂e
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.saveButton}
+                    onPress={handleSaveCustomTrip}
+                  >
+                    <Ionicons name="checkmark-circle" size={20} color={Colors.white} />
+                    <Text style={styles.saveButtonText}>Save Trip</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      )}
 
       {/* Trip Confirmation Modal */}
       {selectedTrip && (
@@ -763,6 +1042,219 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     ...TextStyles.button,
     color: Colors.textSecondary,
+  },
+  
+  // Manual entry button
+  manualEntryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginBottom: Spacing.xl,
+  },
+  manualEntryText: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    flex: 1,
+    marginLeft: Spacing.md,
+  },
+  
+  // Manual entry modal
+  manualEntryModal: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    maxHeight: '90%',
+    width: '100%',
+  },
+  manualEntryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Spacing.base,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  manualEntryContent: {
+    padding: Spacing.base,
+    maxHeight: 500,
+  },
+  inputLabel: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  textInput: {
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
+  },
+  modeScrollView: {
+    marginBottom: Spacing.md,
+  },
+  manualModeButton: {
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    marginRight: Spacing.sm,
+    borderRadius: BorderRadius.base,
+    backgroundColor: Colors.backgroundTertiary,
+    minWidth: 70,
+  },
+  manualModeButtonActive: {
+    backgroundColor: Colors.primary + '20',
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  manualModeEmoji: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  manualModeLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+  },
+  manualModeLabelActive: {
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  calculateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+    marginTop: Spacing.sm,
+  },
+  calculateButtonText: {
+    ...TextStyles.button,
+    color: Colors.white,
+    marginLeft: Spacing.sm,
+  },
+  calculationResult: {
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginTop: Spacing.md,
+  },
+  calculationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  calculationLabel: {
+    ...TextStyles.body,
+    color: Colors.textSecondary,
+  },
+  calculationValue: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+  },
+  calculationRowHighlight: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.carbonLowBg,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    marginVertical: Spacing.sm,
+  },
+  calculationLabelBold: {
+    ...TextStyles.body,
+    color: Colors.carbonLow,
+    fontWeight: '600',
+  },
+  calculationValueBold: {
+    ...TextStyles.body,
+    color: Colors.carbonLow,
+    fontWeight: '700',
+  },
+  alternativesTitle: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  alternativeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+  },
+  alternativeMode: {
+    ...TextStyles.bodySmall,
+    color: Colors.textPrimary,
+    flex: 1,
+  },
+  alternativeCarbon: {
+    ...TextStyles.bodySmall,
+    color: Colors.carbonLow,
+    marginRight: Spacing.md,
+  },
+  alternativeDuration: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    width: 60,
+    textAlign: 'right',
+  },
+  saveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  saveButtonText: {
+    ...TextStyles.button,
+    color: Colors.white,
+    marginLeft: Spacing.sm,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: Spacing.xl,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+  dividerText: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    paddingHorizontal: Spacing.md,
+  },
+  distanceInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  distanceInput: {
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  distanceUnit: {
+    ...TextStyles.body,
+    color: Colors.textSecondary,
+    width: 30,
+  },
+  quickCalculation: {
+    backgroundColor: Colors.carbonLowBg,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.base,
+    marginTop: Spacing.md,
+  },
+  quickCalculationText: {
+    ...TextStyles.body,
+    color: Colors.carbonLow,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
   },
 });
 

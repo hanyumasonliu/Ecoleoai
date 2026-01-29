@@ -69,13 +69,16 @@ const SPEED_THRESHOLDS = {
 const EMISSION_FACTORS: Record<TransportMode, number> = {
   walk: 0,
   bike: 0,
+  scooter: 0.02,
   bus: 0.089,
   train: 0.041,
   subway: 0.031,
   car: 0.171,
   electric_car: 0.053,
+  carpool: 0.086, // Assuming 2 people
   motorcycle: 0.103,
   uber: 0.171,
+  taxi: 0.171,
   plane: 0.255,
 };
 

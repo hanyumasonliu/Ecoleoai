@@ -22,7 +22,10 @@ export type TransportMode =
   | 'electric_car'
   | 'motorcycle'
   | 'uber'
-  | 'subway';
+  | 'subway'
+  | 'scooter'
+  | 'carpool'
+  | 'taxi';
 
 /**
  * Food categories for carbon estimation

@@ -2,6 +2,7 @@
  * GreenSense AR - Carbon Context
  * 
  * Global state management for daily carbon budget, activities, and tracking.
+ * Uses dataLayer for persistence (designed for easy Supabase migration).
  */
 
 import React, {
@@ -11,43 +12,39 @@ import React, {
   useEffect,
   useCallback,
   ReactNode,
+  useMemo,
 } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Activity,
   DailyLog,
   WeeklySummary,
   ActivityCategory,
   ProductActivity,
+  TransportActivity,
+  FoodActivity,
+  EnergyActivity,
 } from '../types/activity';
 import {
   UserSettings,
   DEFAULT_USER_SETTINGS,
 } from '../types/user';
-import { AnalyzedObject } from '../types/carbon';
-
-/**
- * Storage keys
- */
-const STORAGE_KEYS = {
-  DAILY_LOGS: '@greensense_daily_logs',
-  USER_SETTINGS: '@greensense_user_settings',
-  CURRENT_DATE: '@greensense_current_date',
-};
-
-/**
- * Get date string in YYYY-MM-DD format
- */
-const getDateString = (date: Date = new Date()): string => {
-  return date.toISOString().split('T')[0];
-};
-
-/**
- * Generate unique ID
- */
-const generateId = (): string => {
-  return `act_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-};
+import { AnalyzedObject, ScanRecord } from '../types/carbon';
+import {
+  getAllDailyLogs,
+  getDailyLog,
+  saveDailyLog,
+  addActivity as dataLayerAddActivity,
+  removeActivity as dataLayerRemoveActivity,
+  getUserSettings,
+  saveUserSettings,
+  getWeeklySummary,
+  getDateString,
+  generateId,
+  getScanHistory,
+  saveScanRecord,
+  getScansForDate,
+  DailyLogData,
+} from '../services/dataLayer';
 
 /**
  * Carbon Context Type
@@ -56,6 +53,7 @@ interface CarbonContextType {
   // Daily data
   todayLog: DailyLog;
   selectedDate: Date;
+  selectedDateLog: DailyLog;
   setSelectedDate: (date: Date) => void;
   
   // User settings
@@ -63,15 +61,28 @@ interface CarbonContextType {
   updateSettings: (updates: Partial<UserSettings>) => Promise<void>;
   
   // Activities
-  addActivity: (activity: Omit<Activity, 'id' | 'timestamp'>) => Promise<void>;
-  addProductScan: (objects: AnalyzedObject[]) => Promise<void>;
-  removeActivity: (activityId: string) => Promise<void>;
+  addActivity: (activity: Omit<Activity, 'id' | 'timestamp'>, date?: string) => Promise<void>;
+  addProductScan: (objects: AnalyzedObject[], date?: string) => Promise<void>;
+  addTransportActivity: (trip: Omit<TransportActivity, 'id' | 'timestamp' | 'category'>) => Promise<void>;
+  addFoodActivity: (food: Omit<FoodActivity, 'id' | 'timestamp' | 'category'>) => Promise<void>;
+  addEnergyActivity: (energy: Omit<EnergyActivity, 'id' | 'timestamp' | 'category'>) => Promise<void>;
+  removeActivity: (activityId: string, date?: string) => Promise<void>;
   
-  // Computed values
+  // Scan history
+  scanHistory: ScanRecord[];
+  getScansForSelectedDate: () => ScanRecord[];
+  
+  // Computed values for today
   remainingBudget: number;
   isOverBudget: boolean;
   budgetProgress: number;
   categoryTotals: Record<ActivityCategory, number>;
+  
+  // Computed values for selected date
+  selectedDateRemainingBudget: number;
+  selectedDateIsOverBudget: boolean;
+  selectedDateBudgetProgress: number;
+  selectedDateCategoryTotals: Record<ActivityCategory, number>;
   
   // Weekly data
   weeklySummary: WeeklySummary | null;
@@ -84,7 +95,19 @@ interface CarbonContextType {
 }
 
 /**
- * Default daily log
+ * Convert DailyLogData to DailyLog
+ */
+const toDailyLog = (data: DailyLogData): DailyLog => ({
+  date: data.date,
+  activities: data.activities,
+  totalCarbonKg: data.totalCarbonKg,
+  budgetKg: data.budgetKg,
+  isUnderBudget: data.totalCarbonKg <= data.budgetKg,
+  categoryTotals: data.categoryTotals,
+});
+
+/**
+ * Create empty daily log
  */
 const createEmptyDailyLog = (date: string, budgetKg: number): DailyLog => ({
   date,
@@ -106,16 +129,26 @@ const createEmptyDailyLog = (date: string, budgetKg: number): DailyLog => ({
 const defaultContext: CarbonContextType = {
   todayLog: createEmptyDailyLog(getDateString(), 8),
   selectedDate: new Date(),
+  selectedDateLog: createEmptyDailyLog(getDateString(), 8),
   setSelectedDate: () => {},
   settings: DEFAULT_USER_SETTINGS,
   updateSettings: async () => {},
   addActivity: async () => {},
   addProductScan: async () => {},
+  addTransportActivity: async () => {},
+  addFoodActivity: async () => {},
+  addEnergyActivity: async () => {},
   removeActivity: async () => {},
+  scanHistory: [],
+  getScansForSelectedDate: () => [],
   remainingBudget: 8,
   isOverBudget: false,
   budgetProgress: 0,
   categoryTotals: { food: 0, transport: 0, product: 0, energy: 0 },
+  selectedDateRemainingBudget: 8,
+  selectedDateIsOverBudget: false,
+  selectedDateBudgetProgress: 0,
+  selectedDateCategoryTotals: { food: 0, transport: 0, product: 0, energy: 0 },
   weeklySummary: null,
   isLoading: true,
   refresh: async () => {},
@@ -137,9 +170,10 @@ interface CarbonProviderProps {
  * Carbon Provider Component
  */
 export function CarbonProvider({ children }: CarbonProviderProps) {
-  const [dailyLogs, setDailyLogs] = useState<Record<string, DailyLog>>({});
+  const [dailyLogs, setDailyLogs] = useState<Record<string, DailyLogData>>({});
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_USER_SETTINGS);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [scanHistory, setScanHistory] = useState<ScanRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const todayString = getDateString();
@@ -150,44 +184,20 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
    */
   const loadData = useCallback(async () => {
     try {
-      const [logsData, settingsData] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.DAILY_LOGS),
-        AsyncStorage.getItem(STORAGE_KEYS.USER_SETTINGS),
+      setIsLoading(true);
+      const [logsData, settingsData, scans] = await Promise.all([
+        getAllDailyLogs(),
+        getUserSettings(),
+        getScanHistory(),
       ]);
 
-      if (logsData) {
-        setDailyLogs(JSON.parse(logsData));
-      }
-
-      if (settingsData) {
-        setSettings({ ...DEFAULT_USER_SETTINGS, ...JSON.parse(settingsData) });
-      }
+      setDailyLogs(logsData);
+      setSettings(settingsData);
+      setScanHistory(scans);
     } catch (error) {
       console.error('Error loading carbon data:', error);
     } finally {
       setIsLoading(false);
-    }
-  }, []);
-
-  /**
-   * Save daily logs to storage
-   */
-  const saveDailyLogs = useCallback(async (logs: Record<string, DailyLog>) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.DAILY_LOGS, JSON.stringify(logs));
-    } catch (error) {
-      console.error('Error saving daily logs:', error);
-    }
-  }, []);
-
-  /**
-   * Save settings to storage
-   */
-  const saveSettings = useCallback(async (newSettings: UserSettings) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.USER_SETTINGS, JSON.stringify(newSettings));
-    } catch (error) {
-      console.error('Error saving settings:', error);
     }
   }, []);
 
@@ -201,9 +211,9 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
   /**
    * Get or create daily log for a date
    */
-  const getDailyLog = useCallback((dateString: string): DailyLog => {
+  const getDailyLogForDate = useCallback((dateString: string): DailyLog => {
     if (dailyLogs[dateString]) {
-      return dailyLogs[dateString];
+      return toDailyLog(dailyLogs[dateString]);
     }
     return createEmptyDailyLog(dateString, settings.goals.dailyBudgetKg);
   }, [dailyLogs, settings.goals.dailyBudgetKg]);
@@ -211,71 +221,99 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
   /**
    * Today's log
    */
-  const todayLog = getDailyLog(todayString);
+  const todayLog = useMemo(() => getDailyLogForDate(todayString), [getDailyLogForDate, todayString]);
 
   /**
-   * Recalculate daily log totals
+   * Selected date's log
    */
-  const recalculateLog = (log: DailyLog): DailyLog => {
-    const categoryTotals = { food: 0, transport: 0, product: 0, energy: 0 };
-    let totalCarbonKg = 0;
+  const selectedDateLog = useMemo(() => getDailyLogForDate(selectedDateString), [getDailyLogForDate, selectedDateString]);
 
-    for (const activity of log.activities) {
-      categoryTotals[activity.category] += activity.carbonKg;
-      totalCarbonKg += activity.carbonKg;
-    }
-
-    return {
-      ...log,
-      totalCarbonKg,
-      categoryTotals,
-      isUnderBudget: totalCarbonKg <= log.budgetKg,
-    };
-  };
+  /**
+   * Get scans for selected date
+   */
+  const getScansForSelectedDate = useCallback(() => {
+    return scanHistory.filter(scan => {
+      const scanDate = new Date(scan.timestamp).toISOString().split('T')[0];
+      return scanDate === selectedDateString;
+    });
+  }, [scanHistory, selectedDateString]);
 
   /**
    * Add an activity
    */
   const addActivity = useCallback(async (
-    activityData: Omit<Activity, 'id' | 'timestamp'>
+    activityData: Omit<Activity, 'id' | 'timestamp'>,
+    date: string = todayString
   ) => {
-    const activity = {
-      ...activityData,
-      id: generateId(),
-      timestamp: new Date().toISOString(),
-    } as Activity;
+    try {
+      const activity = await dataLayerAddActivity(
+        activityData,
+        date,
+        settings.goals.dailyBudgetKg
+      );
 
-    const dateString = getDateString();
-    const currentLog = getDailyLog(dateString);
-    const updatedLog = recalculateLog({
-      ...currentLog,
-      activities: [activity, ...currentLog.activities],
-    });
+      // Update local state
+      setDailyLogs(prev => {
+        const currentLog = prev[date] || {
+          date,
+          activities: [],
+          totalCarbonKg: 0,
+          budgetKg: settings.goals.dailyBudgetKg,
+          categoryTotals: { food: 0, transport: 0, product: 0, energy: 0 },
+        };
+        
+        const newActivities = [activity, ...currentLog.activities];
+        const totalCarbonKg = newActivities.reduce((sum, a) => sum + a.carbonKg, 0);
+        
+        return {
+          ...prev,
+          [date]: {
+            ...currentLog,
+            activities: newActivities,
+            totalCarbonKg,
+            categoryTotals: {
+              food: newActivities.filter(a => a.category === 'food').reduce((sum, a) => sum + a.carbonKg, 0),
+              transport: newActivities.filter(a => a.category === 'transport').reduce((sum, a) => sum + a.carbonKg, 0),
+              product: newActivities.filter(a => a.category === 'product').reduce((sum, a) => sum + a.carbonKg, 0),
+              energy: newActivities.filter(a => a.category === 'energy').reduce((sum, a) => sum + a.carbonKg, 0),
+            },
+          },
+        };
+      });
 
-    const newLogs = {
-      ...dailyLogs,
-      [dateString]: updatedLog,
-    };
-
-    setDailyLogs(newLogs);
-    await saveDailyLogs(newLogs);
-
-    // Update settings stats
-    const newSettings = {
-      ...settings,
-      totalScans: settings.totalScans + 1,
-      totalCarbonTracked: settings.totalCarbonTracked + activity.carbonKg,
-    };
-    setSettings(newSettings);
-    await saveSettings(newSettings);
-  }, [dailyLogs, settings, getDailyLog, saveDailyLogs, saveSettings]);
+      // Update settings stats
+      const newSettings = {
+        ...settings,
+        totalScans: settings.totalScans + 1,
+        totalCarbonTracked: settings.totalCarbonTracked + activity.carbonKg,
+      };
+      setSettings(newSettings);
+      await saveUserSettings(newSettings);
+    } catch (error) {
+      console.error('Error adding activity:', error);
+      throw error;
+    }
+  }, [todayString, settings]);
 
   /**
    * Add product scan (from camera)
    */
-  const addProductScan = useCallback(async (objects: AnalyzedObject[]) => {
+  const addProductScan = useCallback(async (objects: AnalyzedObject[], date: string = todayString) => {
     const totalCarbon = objects.reduce((sum, obj) => sum + obj.carbonKg, 0);
     
+    // Create scan record for history
+    const scanRecord: ScanRecord = {
+      id: generateId('scan'),
+      timestamp: new Date().toISOString(),
+      objects,
+      totalCarbonKg: totalCarbon,
+    };
+    
+    // Save scan record
+    await saveScanRecord(scanRecord);
+    setScanHistory(prev => [scanRecord, ...prev]);
+    
+    // Create activity
     const activity: Omit<ProductActivity, 'id' | 'timestamp'> = {
       category: 'product',
       name: objects.map(o => o.name).slice(0, 2).join(', ') + 
@@ -293,40 +331,95 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
       })),
     };
 
+    await addActivity(activity, date);
+  }, [addActivity, todayString]);
+
+  /**
+   * Add transport activity
+   */
+  const addTransportActivity = useCallback(async (
+    trip: Omit<TransportActivity, 'id' | 'timestamp' | 'category'>
+  ) => {
+    const activity: Omit<TransportActivity, 'id' | 'timestamp'> = {
+      ...trip,
+      category: 'transport',
+    };
+    await addActivity(activity);
+  }, [addActivity]);
+
+  /**
+   * Add food activity
+   */
+  const addFoodActivity = useCallback(async (
+    food: Omit<FoodActivity, 'id' | 'timestamp' | 'category'>
+  ) => {
+    const activity: Omit<FoodActivity, 'id' | 'timestamp'> = {
+      ...food,
+      category: 'food',
+    };
+    await addActivity(activity);
+  }, [addActivity]);
+
+  /**
+   * Add energy activity
+   */
+  const addEnergyActivity = useCallback(async (
+    energy: Omit<EnergyActivity, 'id' | 'timestamp' | 'category'>
+  ) => {
+    const activity: Omit<EnergyActivity, 'id' | 'timestamp'> = {
+      ...energy,
+      category: 'energy',
+    };
     await addActivity(activity);
   }, [addActivity]);
 
   /**
    * Remove an activity
    */
-  const removeActivity = useCallback(async (activityId: string) => {
-    const dateString = getDateString();
-    const currentLog = getDailyLog(dateString);
-    const activity = currentLog.activities.find(a => a.id === activityId);
-    
-    const updatedLog = recalculateLog({
-      ...currentLog,
-      activities: currentLog.activities.filter(a => a.id !== activityId),
-    });
+  const removeActivity = useCallback(async (activityId: string, date: string = todayString) => {
+    try {
+      const currentLog = dailyLogs[date];
+      const activity = currentLog?.activities.find(a => a.id === activityId);
+      
+      await dataLayerRemoveActivity(activityId, date);
+      
+      // Update local state
+      setDailyLogs(prev => {
+        if (!prev[date]) return prev;
+        
+        const newActivities = prev[date].activities.filter(a => a.id !== activityId);
+        const totalCarbonKg = newActivities.reduce((sum, a) => sum + a.carbonKg, 0);
+        
+        return {
+          ...prev,
+          [date]: {
+            ...prev[date],
+            activities: newActivities,
+            totalCarbonKg,
+            categoryTotals: {
+              food: newActivities.filter(a => a.category === 'food').reduce((sum, a) => sum + a.carbonKg, 0),
+              transport: newActivities.filter(a => a.category === 'transport').reduce((sum, a) => sum + a.carbonKg, 0),
+              product: newActivities.filter(a => a.category === 'product').reduce((sum, a) => sum + a.carbonKg, 0),
+              energy: newActivities.filter(a => a.category === 'energy').reduce((sum, a) => sum + a.carbonKg, 0),
+            },
+          },
+        };
+      });
 
-    const newLogs = {
-      ...dailyLogs,
-      [dateString]: updatedLog,
-    };
-
-    setDailyLogs(newLogs);
-    await saveDailyLogs(newLogs);
-
-    // Update settings stats
-    if (activity) {
-      const newSettings = {
-        ...settings,
-        totalCarbonTracked: Math.max(0, settings.totalCarbonTracked - activity.carbonKg),
-      };
-      setSettings(newSettings);
-      await saveSettings(newSettings);
+      // Update settings stats
+      if (activity) {
+        const newSettings = {
+          ...settings,
+          totalCarbonTracked: Math.max(0, settings.totalCarbonTracked - activity.carbonKg),
+        };
+        setSettings(newSettings);
+        await saveUserSettings(newSettings);
+      }
+    } catch (error) {
+      console.error('Error removing activity:', error);
+      throw error;
     }
-  }, [dailyLogs, settings, getDailyLog, saveDailyLogs, saveSettings]);
+  }, [todayString, dailyLogs, settings]);
 
   /**
    * Update settings
@@ -334,13 +427,13 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
   const updateSettings = useCallback(async (updates: Partial<UserSettings>) => {
     const newSettings = { ...settings, ...updates };
     setSettings(newSettings);
-    await saveSettings(newSettings);
-  }, [settings, saveSettings]);
+    await saveUserSettings(newSettings);
+  }, [settings]);
 
   /**
    * Calculate weekly summary
    */
-  const weeklySummary = React.useMemo((): WeeklySummary | null => {
+  const weeklySummary = useMemo((): WeeklySummary | null => {
     const today = new Date();
     const dayOfWeek = today.getDay();
     const weekStart = new Date(today);
@@ -361,11 +454,11 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
       if (log) {
         dailyTotals.push(log.totalCarbonKg);
         weekTotal += log.totalCarbonKg;
-        categoryTotals.food += log.categoryTotals.food;
-        categoryTotals.transport += log.categoryTotals.transport;
-        categoryTotals.product += log.categoryTotals.product;
-        categoryTotals.energy += log.categoryTotals.energy;
-        if (log.isUnderBudget) daysUnderBudget++;
+        categoryTotals.food += log.categoryTotals.food || 0;
+        categoryTotals.transport += log.categoryTotals.transport || 0;
+        categoryTotals.product += log.categoryTotals.product || 0;
+        categoryTotals.energy += log.categoryTotals.energy || 0;
+        if (log.totalCarbonKg <= log.budgetKg) daysUnderBudget++;
       } else {
         dailyTotals.push(0);
       }
@@ -386,25 +479,42 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
   }, [dailyLogs]);
 
   /**
-   * Computed values
+   * Computed values for today
    */
   const remainingBudget = Math.max(0, todayLog.budgetKg - todayLog.totalCarbonKg);
   const isOverBudget = todayLog.totalCarbonKg > todayLog.budgetKg;
-  const budgetProgress = Math.min(todayLog.totalCarbonKg / todayLog.budgetKg, 1);
+  const budgetProgress = todayLog.budgetKg > 0 ? Math.min(todayLog.totalCarbonKg / todayLog.budgetKg, 1) : 0;
+
+  /**
+   * Computed values for selected date
+   */
+  const selectedDateRemainingBudget = Math.max(0, selectedDateLog.budgetKg - selectedDateLog.totalCarbonKg);
+  const selectedDateIsOverBudget = selectedDateLog.totalCarbonKg > selectedDateLog.budgetKg;
+  const selectedDateBudgetProgress = selectedDateLog.budgetKg > 0 ? Math.min(selectedDateLog.totalCarbonKg / selectedDateLog.budgetKg, 1) : 0;
 
   const value: CarbonContextType = {
     todayLog,
     selectedDate,
+    selectedDateLog,
     setSelectedDate,
     settings,
     updateSettings,
     addActivity,
     addProductScan,
+    addTransportActivity,
+    addFoodActivity,
+    addEnergyActivity,
     removeActivity,
+    scanHistory,
+    getScansForSelectedDate,
     remainingBudget,
     isOverBudget,
     budgetProgress,
     categoryTotals: todayLog.categoryTotals,
+    selectedDateRemainingBudget,
+    selectedDateIsOverBudget,
+    selectedDateBudgetProgress,
+    selectedDateCategoryTotals: selectedDateLog.categoryTotals,
     weeklySummary,
     isLoading,
     refresh: loadData,
@@ -429,4 +539,3 @@ export function useCarbon(): CarbonContextType {
 }
 
 export default CarbonContext;
-

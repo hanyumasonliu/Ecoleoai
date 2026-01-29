@@ -21,8 +21,13 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   Alert,
+  ActionSheetIOS,
+  ActivityIndicator,
 } from 'react-native';
 import { CameraView, CameraType, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import { analyzeImageWithGemini } from '../services/gemini';
 import { lookupBarcodeProduct } from '../services/barcode';
@@ -33,6 +38,19 @@ import { AnalyzedObject } from '../types/carbon';
 import { Colors, Spacing, BorderRadius, TextStyles, Shadows, Layout } from '../theme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+/**
+ * Convert ArrayBuffer to base64 string
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
 
 /**
  * Scan mode types
@@ -64,6 +82,7 @@ export function ScanScreen() {
   const [contextInput, setContextInput] = useState('');
   const [showContextInput, setShowContextInput] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   
   const cameraRef = useRef<CameraView>(null);
   const { addScan } = useHistory();
@@ -220,6 +239,144 @@ export function ScanScreen() {
   };
   
   /**
+   * Handle image upload from gallery
+   */
+  const handleUploadImage = async () => {
+    try {
+      // Request permission
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Please allow access to your photo library to upload images.');
+        return;
+      }
+      
+      // Pick image
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.7,
+        base64: true,
+      });
+      
+      if (!result.canceled && result.assets[0].base64) {
+        await processUploadedImage(result.assets[0].base64);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
+    }
+  };
+  
+  /**
+   * Handle document/PDF upload
+   */
+  const handleUploadDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'application/pdf'],
+        copyToCacheDirectory: true,
+      });
+      
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        
+        // Read file as base64 using new File class
+        if (asset.mimeType?.includes('image')) {
+          const file = new File(asset.uri);
+          const arrayBuffer = await file.arrayBuffer();
+          const base64 = arrayBufferToBase64(arrayBuffer);
+          await processUploadedImage(base64);
+        } else if (asset.mimeType === 'application/pdf') {
+          // For PDFs, we can try to extract text or convert
+          Alert.alert(
+            'PDF Processing',
+            'PDF analysis is limited. For best results, please take a clear photo of the receipt or document.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Try Anyway', 
+                onPress: async () => {
+                  // Read as base64 and try to analyze
+                  const file = new File(asset.uri);
+                  const arrayBuffer = await file.arrayBuffer();
+                  const base64 = arrayBufferToBase64(arrayBuffer);
+                  await processUploadedImage(base64, 'This is a PDF document. Extract any visible text and identify products or items mentioned.');
+                }
+              }
+            ]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error picking document:', error);
+      Alert.alert('Error', 'Failed to pick document. Please try again.');
+    }
+  };
+  
+  /**
+   * Process uploaded image with Gemini
+   */
+  const processUploadedImage = async (base64: string, customPrompt?: string) => {
+    setIsUploading(true);
+    setScanResults(null);
+    
+    try {
+      const prompt = customPrompt || getScanPrompt();
+      const response = await analyzeImageWithGemini(base64, prompt);
+      
+      if (response.objects.length > 0) {
+        setScanResults(response.objects);
+        setShowResults(true);
+        
+        // Save to history
+        await addScan(response.objects);
+        await addProductScan(response.objects);
+      } else {
+        setScanResults([]);
+        setShowResults(true);
+      }
+    } catch (error) {
+      console.error('Upload analysis error:', error);
+      Alert.alert('Analysis Failed', 'Could not analyze the image. Please try again.');
+    } finally {
+      setIsUploading(false);
+      setContextInput('');
+      setShowContextInput(false);
+    }
+  };
+  
+  /**
+   * Show upload options
+   */
+  const showUploadOptions = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Choose from Gallery', 'Upload Document/PDF'],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            handleUploadImage();
+          } else if (buttonIndex === 2) {
+            handleUploadDocument();
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Upload Options',
+        'Choose how to upload your image',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Gallery', onPress: handleUploadImage },
+          { text: 'Document/PDF', onPress: handleUploadDocument },
+        ]
+      );
+    }
+  };
+  
+  /**
    * Get current mode info
    */
   const currentMode = SCAN_MODES.find(m => m.key === scanMode) || SCAN_MODES[0];
@@ -287,6 +444,17 @@ export function ScanScreen() {
                 <Text style={styles.title}>GreenSense</Text>
               </View>
               <View style={styles.topBarActions}>
+                <TouchableOpacity 
+                  style={styles.topBarButton}
+                  onPress={showUploadOptions}
+                  disabled={isScanning || isUploading}
+                >
+                  <Ionicons 
+                    name="images-outline" 
+                    size={22} 
+                    color={Colors.white} 
+                  />
+                </TouchableOpacity>
                 <TouchableOpacity 
                   style={styles.topBarButton}
                   onPress={() => setShowContextInput(!showContextInput)}
@@ -403,25 +571,34 @@ export function ScanScreen() {
         <TouchableOpacity
           style={[
             styles.mainScanButton,
-            isScanning && styles.mainScanButtonLoading,
+            (isScanning || isUploading) && styles.mainScanButtonLoading,
             !permission.granted && styles.mainScanButtonDisabled,
           ]}
           onPress={() => {
             console.log('Scan button pressed!');
             handleScan();
           }}
-          disabled={!permission.granted || isScanning}
+          disabled={!permission.granted || isScanning || isUploading}
           activeOpacity={0.7}
         >
-          <Ionicons 
-            name={isScanning ? "sync" : "scan"} 
-            size={36} 
-            color={Colors.white} 
-          />
+          {isUploading ? (
+            <ActivityIndicator size="large" color={Colors.white} />
+          ) : (
+            <Ionicons 
+              name={isScanning ? "sync" : "scan"} 
+              size={36} 
+              color={Colors.white} 
+            />
+          )}
           <Text style={styles.mainScanButtonText}>
-            {isScanning ? 'Analyzing...' : 'Scan'}
+            {isUploading ? 'Processing...' : isScanning ? 'Analyzing...' : 'Scan'}
           </Text>
         </TouchableOpacity>
+        
+        {/* Upload hint */}
+        <Text style={styles.uploadHint}>
+          Tap 📷 to capture • Tap 🖼️ to upload
+        </Text>
       </View>
       
       {/* Results Modal - Full Screen */}
@@ -702,6 +879,12 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontWeight: '600',
     marginTop: Spacing.xs,
+  },
+  uploadHint: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginTop: Spacing.sm,
   },
   
   // Permission screen
