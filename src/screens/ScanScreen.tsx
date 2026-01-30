@@ -10,7 +10,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   Modal,
   Animated,
   Dimensions,
@@ -24,6 +23,7 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, CameraType, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -31,7 +31,8 @@ import { File } from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import { analyzeImageWithGemini } from '../services/gemini';
 import { lookupBarcodeProduct } from '../services/barcode';
-import { useHistory } from '../context/HistoryContext';
+// Note: useHistory's addScan is now deprecated - we use addProductScan from CarbonContext
+// which handles both scan history AND activity creation in one call
 import { useCarbon } from '../context/CarbonContext';
 import { ScanButton, ScanResultList } from '../components';
 import { AnalyzedObject } from '../types/carbon';
@@ -71,22 +72,39 @@ const SCAN_MODES: { key: ScanMode; label: string; icon: keyof typeof Ionicons.gl
  * ScanScreen Component
  * 
  * Camera preview with multi-mode scan functionality and AR-style results overlay.
+ * Accepts route params: { scanMode: 'product' | 'food' | 'receipt' | 'barcode' }
  */
-export function ScanScreen() {
+export function ScanScreen({ route }: { route?: { params?: { scanMode?: ScanMode } } }) {
+  // Get initial scan mode from navigation params
+  const initialMode = route?.params?.scanMode || 'product';
+  
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
   const [isScanning, setIsScanning] = useState(false);
   const [scanResults, setScanResults] = useState<AnalyzedObject[] | null>(null);
   const [showResults, setShowResults] = useState(false);
-  const [scanMode, setScanMode] = useState<ScanMode>('product');
+  const [scanMode, setScanMode] = useState<ScanMode>(initialMode);
   const [contextInput, setContextInput] = useState('');
   const [showContextInput, setShowContextInput] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [resultsSaved, setResultsSaved] = useState(false); // Track if current results were saved
+  
+  // Use ref to prevent race condition with barcode scanning
+  const isBarcodeProcessing = useRef(false);
+  const lastScannedBarcode = useRef<string | null>(null);
+  const lastScanTimestamp = useRef<number>(0);
+  const BARCODE_COOLDOWN_MS = 10000; // 10 second cooldown between scans
   
   const cameraRef = useRef<CameraView>(null);
-  const { addScan } = useHistory();
   const { addProductScan } = useCarbon();
+  
+  // Update scan mode when route params change
+  useEffect(() => {
+    if (route?.params?.scanMode) {
+      setScanMode(route.params.scanMode);
+    }
+  }, [route?.params?.scanMode]);
   
   // Animation values
   const scanLineAnim = useRef(new Animated.Value(0)).current;
@@ -165,12 +183,8 @@ export function ScanScreen() {
         if (response.objects.length > 0) {
           setScanResults(response.objects);
           setShowResults(true);
-          
-          // Save to history (legacy)
-          await addScan(response.objects);
-          
-          // Add to carbon tracking (new)
-          await addProductScan(response.objects);
+          setResultsSaved(false); // Will be saved when modal closes
+          // Note: Items saved when user closes modal (allows removing unwanted items first)
         } else {
           // No objects detected - show empty state
           setScanResults([]);
@@ -190,11 +204,73 @@ export function ScanScreen() {
   };
   
   /**
-   * Close results modal
+   * Close results modal and save the remaining items
    */
-  const handleCloseResults = () => {
+  const handleCloseResults = async () => {
+    // Save remaining items (if any and not already saved)
+    if (scanResults && scanResults.length > 0 && !resultsSaved) {
+      try {
+        await addProductScan(scanResults);
+        console.log('✅ Scan saved with', scanResults.length, 'items');
+      } catch (error) {
+        console.error('Error saving scan:', error);
+      }
+    }
+    
     setShowResults(false);
     setScanResults(null);
+    setResultsSaved(false);
+  };
+  
+  /**
+   * Discard scan without saving
+   */
+  const handleDiscardScan = () => {
+    Alert.alert(
+      'Discard Scan?',
+      'This scan will not be saved.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Discard', 
+          style: 'destructive',
+          onPress: () => {
+            setShowResults(false);
+            setScanResults(null);
+            setResultsSaved(false);
+          }
+        },
+      ]
+    );
+  };
+  
+  /**
+   * Remove an item from the current scan results
+   */
+  const handleRemoveItem = (objectId: string) => {
+    if (!scanResults) return;
+    
+    const updatedResults = scanResults.filter(obj => obj.id !== objectId);
+    
+    if (updatedResults.length === 0) {
+      // If no items left, ask to discard
+      Alert.alert(
+        'No Items Left',
+        'All items have been removed. Discard this scan?',
+        [
+          { 
+            text: 'Discard', 
+            onPress: () => {
+              setShowResults(false);
+              setScanResults(null);
+              setResultsSaved(false);
+            }
+          }
+        ]
+      );
+    } else {
+      setScanResults(updatedResults);
+    }
   };
   
   /**
@@ -205,36 +281,124 @@ export function ScanScreen() {
   };
   
   /**
-   * Handle barcode scan
+   * Handle barcode scan - with aggressive debounce and database lookup + AI fallback
    */
   const handleBarcodeScanned = async (result: BarcodeScanningResult) => {
-    // Prevent multiple scans of the same barcode
-    if (scannedBarcode === result.data || isScanning) return;
+    const now = Date.now();
     
+    // AGGRESSIVE DEBOUNCE: Check timestamp first (most reliable)
+    if (now - lastScanTimestamp.current < BARCODE_COOLDOWN_MS) {
+      return; // Still in cooldown period
+    }
+    
+    // Check if already processing
+    if (isBarcodeProcessing.current) {
+      return; // Already processing a barcode
+    }
+    
+    // Same barcode check
+    if (lastScannedBarcode.current === result.data && now - lastScanTimestamp.current < BARCODE_COOLDOWN_MS) {
+      return; // Same barcode, still in cooldown
+    }
+    
+    // LOCK EVERYTHING IMMEDIATELY
+    isBarcodeProcessing.current = true;
+    lastScannedBarcode.current = result.data;
+    lastScanTimestamp.current = now;
+    
+    // Also update state for UI
     setScannedBarcode(result.data);
     setIsScanning(true);
     
     try {
-      console.log('Barcode detected:', result.data, result.type);
+      console.log('✅ Barcode detected:', result.data, 'Type:', result.type);
       
-      // Look up product from barcode
+      // Step 1: Try to look up product from barcode database
       const products = await lookupBarcodeProduct(result.data);
+      console.log('Barcode lookup result:', products.length, 'products found');
       
-      if (products.length > 0) {
+      // Check if we got a real product or just a generic "not found" entry
+      const isRealProduct = products.length > 0 && 
+        !products[0].name.includes('Product (') && 
+        !products[0].description?.includes('not found');
+      
+      if (isRealProduct) {
+        // Product found in database!
         setScanResults(products);
         setShowResults(true);
+        setResultsSaved(false); // Will be saved when modal closes
+        console.log('✅ Database lookup success:', products[0].name);
+      } else {
+        // Product not in database - use Gemini AI to analyze
+        console.log('📸 Product not in database, using AI to identify...');
         
-        // Save to history
-        await addScan(products);
-        await addProductScan(products);
+        // Capture current frame for AI analysis
+        if (cameraRef.current) {
+          try {
+            const photo = await cameraRef.current.takePictureAsync({
+              quality: 0.7,
+              base64: true,
+            });
+            
+            if (photo?.base64) {
+              // Use Gemini to analyze the product
+              const aiPrompt = `Analyze this product with barcode ${result.data}. Identify what product this is and estimate its lifetime carbon footprint in kg CO₂e. Consider packaging, production, and transport.`;
+              
+              const aiResult = await analyzeImageWithGemini(photo.base64, aiPrompt);
+              
+              if (aiResult.objects.length > 0) {
+                // Add barcode info to the AI result
+                const enhancedResults = aiResult.objects.map(obj => ({
+                  ...obj,
+                  description: `${obj.description || ''} (Barcode: ${result.data})`.trim(),
+                }));
+                
+                setScanResults(enhancedResults);
+                setShowResults(true);
+                setResultsSaved(false); // Will be saved when modal closes
+                console.log('✅ AI identification success:', enhancedResults[0].name);
+              } else {
+                throw new Error('AI could not identify the product');
+              }
+            }
+          } catch (aiError) {
+            console.error('AI fallback failed:', aiError);
+            // Still show the generic result from database lookup
+            setScanResults(products);
+            setShowResults(true);
+            setResultsSaved(false);
+          }
+        } else {
+          // No camera available, use generic result
+          setScanResults(products);
+          setShowResults(true);
+          setResultsSaved(false);
+        }
       }
     } catch (error) {
-      console.error('Barcode lookup error:', error);
-      Alert.alert('Lookup Failed', 'Could not look up product. Please try again.');
+      console.error('❌ Barcode scan error:', error);
+      Alert.alert(
+        'Scan Failed', 
+        'Could not identify this product. Please try again.',
+        [
+          { text: 'Try Again', onPress: () => {
+            lastScannedBarcode.current = null;
+            setScannedBarcode(null);
+          }},
+          { text: 'Use Product Scan', onPress: () => setScanMode('product') },
+        ]
+      );
     } finally {
       setIsScanning(false);
-      // Reset scanned barcode after a delay to allow rescanning
-      setTimeout(() => setScannedBarcode(null), 3000);
+      isBarcodeProcessing.current = false;
+      
+      // Keep the cooldown active for 10 seconds to prevent duplicates
+      // Only reset after the full cooldown period
+      setTimeout(() => {
+        lastScannedBarcode.current = null;
+        setScannedBarcode(null);
+        // Note: lastScanTimestamp is NOT reset, so the cooldown still applies
+      }, BARCODE_COOLDOWN_MS);
     }
   };
   
@@ -327,13 +491,11 @@ export function ScanScreen() {
       if (response.objects.length > 0) {
         setScanResults(response.objects);
         setShowResults(true);
-        
-        // Save to history
-        await addScan(response.objects);
-        await addProductScan(response.objects);
+        setResultsSaved(false); // Will be saved when modal closes
       } else {
         setScanResults([]);
         setShowResults(true);
+        setResultsSaved(false);
       }
     } catch (error) {
       console.error('Upload analysis error:', error);
@@ -608,8 +770,11 @@ export function ScanScreen() {
         transparent={false}
         onRequestClose={handleCloseResults}
       >
-        <SafeAreaView style={styles.modalFullScreen}>
+        <View style={styles.modalFullScreen}>
           <StatusBar barStyle="light-content" />
+          
+          {/* Safe area spacer for top */}
+          <View style={styles.modalSafeTop} />
           
           {/* Modal header */}
           <View style={styles.modalHeader}>
@@ -635,20 +800,35 @@ export function ScanScreen() {
             <ScanResultList
               objects={scanResults || []}
               showTotal
+              editable={true}
+              onRemoveItem={handleRemoveItem}
             />
           </View>
           
           {/* Action buttons */}
           <View style={styles.modalActions}>
+            {/* Discard button */}
+            <TouchableOpacity
+              style={styles.discardButton}
+              onPress={handleDiscardScan}
+            >
+              <Ionicons name="trash-outline" size={20} color={Colors.carbonHigh} />
+              <Text style={styles.discardButtonText}>Discard</Text>
+            </TouchableOpacity>
+            
+            {/* Save & Scan Again */}
             <TouchableOpacity
               style={[styles.scanAgainButton, { backgroundColor: currentMode.color }]}
               onPress={handleCloseResults}
             >
-              <Ionicons name="scan" size={20} color={Colors.white} />
-              <Text style={styles.scanAgainText}>Scan Again</Text>
+              <Ionicons name="checkmark-circle" size={20} color={Colors.white} />
+              <Text style={styles.scanAgainText}>Save & Continue</Text>
             </TouchableOpacity>
           </View>
-        </SafeAreaView>
+          
+          {/* Safe area spacer for bottom */}
+          <View style={styles.modalSafeBottom} />
+        </View>
       </Modal>
     </View>
   );
@@ -935,12 +1115,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  modalSafeTop: {
+    height: Platform.OS === 'ios' ? 50 : 30, // Account for notch/status bar
+    backgroundColor: Colors.background,
+  },
+  modalSafeBottom: {
+    height: Platform.OS === 'ios' ? 20 : 10,
+    backgroundColor: Colors.background,
+  },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.base,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.base,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
@@ -979,6 +1168,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.base,
   },
   modalActions: {
+    flexDirection: 'row',
     paddingHorizontal: Spacing.base,
     paddingVertical: Spacing.base,
     paddingBottom: Spacing.xl,
@@ -986,14 +1176,30 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.border,
     alignItems: 'center',
   },
-  scanAgainButton: {
+  discardButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing['2xl'],
+    paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.base,
     borderRadius: BorderRadius.base,
-    width: '100%',
+    borderWidth: 1,
+    borderColor: Colors.carbonHigh,
+    marginRight: Spacing.md,
+  },
+  discardButtonText: {
+    ...TextStyles.button,
+    color: Colors.carbonHigh,
+    marginLeft: Spacing.xs,
+  },
+  scanAgainButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.base,
+    borderRadius: BorderRadius.base,
   },
   scanAgainText: {
     ...TextStyles.button,

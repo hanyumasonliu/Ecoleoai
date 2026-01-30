@@ -137,7 +137,7 @@ export async function getAllDailyLogs(): Promise<Record<string, DailyLogData>> {
  * Get daily log for a specific date
  * SUPABASE: SELECT * FROM daily_logs WHERE user_id = ? AND date = ?
  */
-export async function getDailyLog(date: string, budgetKg: number = 8): Promise<DailyLogData> {
+export async function getDailyLog(date: string, budgetKg: number = 20): Promise<DailyLogData> {
   const logs = await getAllDailyLogs();
   if (logs[date]) {
     return logs[date];
@@ -237,7 +237,7 @@ export async function saveDailyLog(log: DailyLogData): Promise<void> {
 export async function addActivity(
   activity: Omit<Activity, 'id' | 'timestamp'>,
   date: string = getDateString(),
-  budgetKg: number = 8
+  budgetKg: number = 20
 ): Promise<Activity> {
   const fullActivity = {
     ...activity,
@@ -471,7 +471,49 @@ export async function getUserSettings(): Promise<UserSettings> {
   try {
     const data = await AsyncStorage.getItem(STORAGE_KEYS.USER_SETTINGS);
     if (data) {
-      return { ...DEFAULT_USER_SETTINGS, ...JSON.parse(data) };
+      const stored = JSON.parse(data);
+      
+      // Migration: Update old default budget (8) to new default (20)
+      const storedBudget = stored.goals?.dailyBudgetKg;
+      const migratedBudget = (storedBudget === 8 || storedBudget === 8.8) 
+        ? DEFAULT_USER_SETTINGS.goals.dailyBudgetKg 
+        : (storedBudget || DEFAULT_USER_SETTINGS.goals.dailyBudgetKg);
+      
+      // Deep merge to ensure new default values are applied
+      const mergedSettings: UserSettings = {
+        ...DEFAULT_USER_SETTINGS,
+        ...stored,
+        // Deep merge nested objects to pick up new defaults
+        goals: {
+          ...DEFAULT_USER_SETTINGS.goals,
+          ...(stored.goals || {}),
+          dailyBudgetKg: migratedBudget, // Apply migrated budget
+        },
+        notifications: {
+          ...DEFAULT_USER_SETTINGS.notifications,
+          ...(stored.notifications || {}),
+        },
+        homeEnergy: {
+          ...DEFAULT_USER_SETTINGS.homeEnergy,
+          ...(stored.homeEnergy || {}),
+          baselines: {
+            ...DEFAULT_USER_SETTINGS.homeEnergy.baselines,
+            ...(stored.homeEnergy?.baselines || {}),
+          },
+        },
+        transport: {
+          ...DEFAULT_USER_SETTINGS.transport,
+          ...(stored.transport || {}),
+        },
+      };
+      
+      // Save migrated settings if budget was updated
+      if (storedBudget === 8 || storedBudget === 8.8) {
+        await AsyncStorage.setItem(STORAGE_KEYS.USER_SETTINGS, JSON.stringify(mergedSettings));
+        console.log('Migrated daily budget from', storedBudget, 'to', migratedBudget);
+      }
+      
+      return mergedSettings;
     }
     return DEFAULT_USER_SETTINGS;
   } catch (error) {

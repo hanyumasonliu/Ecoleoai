@@ -10,7 +10,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StatusBar,
@@ -19,11 +18,12 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useCarbon } from '../context/CarbonContext';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
 import { getDateString } from '../services/dataLayer';
-import { Activity, ActivityCategory } from '../types/activity';
+import { Activity, ActivityCategory, ProductActivity, FoodActivity, TransportActivity, EnergyActivity } from '../types/activity';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -122,10 +122,20 @@ export function HomeScreen() {
   // Calculate streak from weekly summary
   const streak = weeklySummary?.daysUnderBudget || 0;
 
-  // Format carbon for display
+  // Format carbon for display - compact version for category cards
   const formatCarbon = (kg: number) => {
     if (kg >= 1000) return `${(kg / 1000).toFixed(1)}t`;
+    if (kg >= 100) return `${Math.round(kg)}kg`;
+    if (kg >= 10) return `${kg.toFixed(1)}kg`;
     return `${kg.toFixed(1)}kg`;
+  };
+  
+  // Format carbon for category cards - even more compact
+  const formatCategoryCarbon = (kg: number) => {
+    if (kg >= 1000) return { value: (kg / 1000).toFixed(1), unit: 't' };
+    if (kg >= 100) return { value: Math.round(kg).toString(), unit: 'kg' };
+    if (kg >= 10) return { value: kg.toFixed(0), unit: 'kg' };
+    return { value: kg.toFixed(1), unit: 'kg' };
   };
 
   // Format date for display
@@ -136,7 +146,7 @@ export function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
       
       {/* Header */}
@@ -260,14 +270,21 @@ export function HomeScreen() {
         <View style={styles.categoryGrid}>
           {CATEGORIES.map((category) => {
             const categoryKey = category.key as keyof typeof selectedDateCategoryTotals;
-            const categoryCarbon = selectedDateCategoryTotals[categoryKey] || 0;
+            const activityCarbon = selectedDateCategoryTotals[categoryKey] || 0;
+            // For energy category, show ONLY the baseline (daily energy from utility bills)
+            // This is the consistent daily energy footprint - one-time logs are separate additions
+            const categoryCarbon = categoryKey === 'energy' 
+              ? baselineCarbon
+              : activityCarbon;
             const categoryProgress = Math.min(categoryCarbon / (dailyBudget / 4), 1);
+            const formatted = formatCategoryCarbon(categoryCarbon);
             
             return (
               <View key={category.key} style={styles.categoryCard}>
-                <Text style={styles.categoryValue}>
-                  {formatCarbon(categoryCarbon)}
-                </Text>
+                <View style={styles.categoryValueRow}>
+                  <Text style={styles.categoryValue}>{formatted.value}</Text>
+                  <Text style={styles.categoryUnit}>{formatted.unit}</Text>
+                </View>
                 <Text style={styles.categoryName}>{category.name}</Text>
                 
                 {/* Mini progress ring */}
@@ -379,6 +396,15 @@ export function HomeScreen() {
       >
         <View style={styles.detailModalOverlay}>
           <View style={styles.detailModal}>
+            {/* Drag handle */}
+            <View style={styles.modalHandle}>
+              <View style={styles.modalHandleBar} />
+            </View>
+            <ScrollView 
+              style={styles.detailModalScroll}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.detailModalScrollContent}
+            >
             {selectedActivity && (
               <>
                 <View style={styles.detailModalHeader}>
@@ -412,7 +438,7 @@ export function HomeScreen() {
                         ? selectedActivity.carbonKg.toFixed(4) 
                         : selectedActivity.carbonKg.toFixed(2)}
                     </Text>
-                    <Text style={styles.detailStatLabel}>kg CO₂e</Text>
+                    <Text style={styles.detailStatLabel}>kg CO₂e Total</Text>
                   </View>
                   {'distanceKm' in selectedActivity && (selectedActivity as any).distanceKm > 0 && (
                     <View style={styles.detailStat}>
@@ -435,6 +461,173 @@ export function HomeScreen() {
                     </View>
                   )}
                 </View>
+
+                {/* Individual Items for Product Scans */}
+                {selectedActivity.category === 'product' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>
+                      Scanned Items {(selectedActivity as ProductActivity).objects?.length 
+                        ? `(${(selectedActivity as ProductActivity).objects.length})`
+                        : ''}
+                    </Text>
+                    {(selectedActivity as ProductActivity).objects && 
+                     (selectedActivity as ProductActivity).objects.length > 0 ? (
+                      (selectedActivity as ProductActivity).objects.map((item, index) => (
+                        <View key={item.id || index} style={styles.itemRow}>
+                          <View style={styles.itemLeft}>
+                            <View style={[
+                              styles.itemSeverityDot,
+                              { backgroundColor: getSeverityColor(item.severity) }
+                            ]} />
+                            <View style={styles.itemInfo}>
+                              <Text style={styles.itemName}>{item.name}</Text>
+                              {item.description && (
+                                <Text style={styles.itemDescription} numberOfLines={2}>
+                                  {item.description}
+                                </Text>
+                              )}
+                            </View>
+                          </View>
+                          <View style={styles.itemRight}>
+                            <Text style={[
+                              styles.itemCarbon,
+                              { color: getSeverityColor(item.severity) }
+                            ]}>
+                              {item.carbonKg < 0.01 
+                                ? item.carbonKg.toFixed(4) 
+                                : item.carbonKg.toFixed(2)} kg
+                            </Text>
+                          </View>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.itemDescription}>
+                        Item details not available for this scan.
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* Ingredients for Food Scans */}
+                {selectedActivity.category === 'food' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>
+                      Food Details {(selectedActivity as FoodActivity).ingredients?.length 
+                        ? `(${(selectedActivity as FoodActivity).ingredients!.length} ingredients)`
+                        : ''}
+                    </Text>
+                    {(selectedActivity as FoodActivity).foodCategory && (
+                      <View style={styles.itemRow}>
+                        <View style={styles.itemLeft}>
+                          <View style={[styles.itemSeverityDot, { backgroundColor: Colors.categoryFood }]} />
+                          <View style={styles.itemInfo}>
+                            <Text style={styles.itemName}>Category</Text>
+                            <Text style={styles.itemDescription}>
+                              {(selectedActivity as FoodActivity).foodCategory.charAt(0).toUpperCase() + 
+                               (selectedActivity as FoodActivity).foodCategory.slice(1)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    )}
+                    {(selectedActivity as FoodActivity).mealType && (
+                      <View style={styles.itemRow}>
+                        <View style={styles.itemLeft}>
+                          <View style={[styles.itemSeverityDot, { backgroundColor: Colors.categoryFood }]} />
+                          <View style={styles.itemInfo}>
+                            <Text style={styles.itemName}>Meal Type</Text>
+                            <Text style={styles.itemDescription}>
+                              {(selectedActivity as FoodActivity).mealType!.charAt(0).toUpperCase() + 
+                               (selectedActivity as FoodActivity).mealType!.slice(1)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    )}
+                    {(selectedActivity as FoodActivity).ingredients && 
+                     (selectedActivity as FoodActivity).ingredients!.length > 0 ? (
+                      (selectedActivity as FoodActivity).ingredients!.map((ingredient, index) => (
+                        <View key={index} style={styles.itemRow}>
+                          <View style={styles.itemLeft}>
+                            <View style={[styles.itemSeverityDot, { backgroundColor: Colors.categoryFood }]} />
+                            <View style={styles.itemInfo}>
+                              <Text style={styles.itemName}>{ingredient.name}</Text>
+                              <Text style={styles.itemDescription}>{ingredient.quantity}</Text>
+                            </View>
+                          </View>
+                          <View style={styles.itemRight}>
+                            <Text style={[styles.itemCarbon, { color: Colors.categoryFood }]}>
+                              {ingredient.carbonKg.toFixed(2)} kg
+                            </Text>
+                          </View>
+                        </View>
+                      ))
+                    ) : (
+                      !(selectedActivity as FoodActivity).foodCategory && !(selectedActivity as FoodActivity).mealType && (
+                        <Text style={styles.itemDescription}>
+                          Detailed ingredient breakdown not available for this entry.
+                        </Text>
+                      )
+                    )}
+                  </View>
+                )}
+
+                {/* Transport Details */}
+                {selectedActivity.category === 'transport' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>Trip Details</Text>
+                    <View style={styles.tripDetailsGrid}>
+                      {(selectedActivity as TransportActivity).startLocation && (
+                        <View style={styles.tripDetailRow}>
+                          <Ionicons name="location" size={16} color={Colors.carbonLow} />
+                          <Text style={styles.tripDetailLabel}>From:</Text>
+                          <Text style={styles.tripDetailValue} numberOfLines={1}>
+                            {(selectedActivity as TransportActivity).startLocation}
+                          </Text>
+                        </View>
+                      )}
+                      {(selectedActivity as TransportActivity).endLocation && (
+                        <View style={styles.tripDetailRow}>
+                          <Ionicons name="flag" size={16} color={Colors.carbonHigh} />
+                          <Text style={styles.tripDetailLabel}>To:</Text>
+                          <Text style={styles.tripDetailValue} numberOfLines={1}>
+                            {(selectedActivity as TransportActivity).endLocation}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
+
+                {/* Energy Details */}
+                {selectedActivity.category === 'energy' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>Energy Details</Text>
+                    <View style={styles.tripDetailsGrid}>
+                      <View style={styles.tripDetailRow}>
+                        <Ionicons name="flash" size={16} color={Colors.categoryEnergy} />
+                        <Text style={styles.tripDetailLabel}>Type:</Text>
+                        <Text style={styles.tripDetailValue}>
+                          {(selectedActivity as EnergyActivity).energyType.replace('_', ' ')}
+                        </Text>
+                      </View>
+                      <View style={styles.tripDetailRow}>
+                        <Ionicons name="speedometer" size={16} color={Colors.categoryEnergy} />
+                        <Text style={styles.tripDetailLabel}>Amount:</Text>
+                        <Text style={styles.tripDetailValue}>
+                          {(selectedActivity as EnergyActivity).energyKwh.toFixed(1)} kWh
+                        </Text>
+                      </View>
+                      <View style={styles.tripDetailRow}>
+                        <Ionicons name="calendar" size={16} color={Colors.categoryEnergy} />
+                        <Text style={styles.tripDetailLabel}>Period:</Text>
+                        <Text style={styles.tripDetailValue}>
+                          {(selectedActivity as EnergyActivity).period}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
                 
                 <View style={styles.detailInfo}>
                   <View style={styles.detailInfoRow}>
@@ -448,16 +641,16 @@ export function HomeScreen() {
                     <View style={styles.detailInfoRow}>
                       <Ionicons name="car-outline" size={16} color={Colors.textSecondary} />
                       <Text style={styles.detailInfoText}>
-                        Mode: {(selectedActivity as any).mode}
+                        Mode: {(selectedActivity as TransportActivity).mode}
                       </Text>
                     </View>
                   )}
                   
-                  {'durationMinutes' in selectedActivity && (selectedActivity as any).durationMinutes > 0 && (
+                  {'durationMinutes' in selectedActivity && (selectedActivity as TransportActivity).durationMinutes && (selectedActivity as TransportActivity).durationMinutes! > 0 && (
                     <View style={styles.detailInfoRow}>
                       <Ionicons name="timer-outline" size={16} color={Colors.textSecondary} />
                       <Text style={styles.detailInfoText}>
-                        Duration: {Math.round((selectedActivity as any).durationMinutes)} min
+                        Duration: {Math.round((selectedActivity as TransportActivity).durationMinutes!)} min
                       </Text>
                     </View>
                   )}
@@ -474,6 +667,7 @@ export function HomeScreen() {
                 </View>
               </>
             )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -498,6 +692,15 @@ function getCategoryColor(category: string): string {
     case 'transport': return '#F59E0B';
     case 'product': return '#8B5CF6';
     case 'energy': return '#EAB308';
+    default: return Colors.textSecondary;
+  }
+}
+
+function getSeverityColor(severity: 'low' | 'medium' | 'high'): string {
+  switch (severity) {
+    case 'low': return Colors.carbonLow;
+    case 'medium': return Colors.carbonMedium;
+    case 'high': return Colors.carbonHigh;
     default: return Colors.textSecondary;
   }
 }
@@ -544,7 +747,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.base,
-    paddingBottom: Spacing['3xl'],
+    paddingBottom: Spacing.xl,
   },
   
   // Week calendar
@@ -716,10 +919,22 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
     alignItems: 'center',
   },
-  categoryValue: {
-    ...TextStyles.h5,
-    color: Colors.textPrimary,
+  categoryValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
     marginBottom: 2,
+  },
+  categoryValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  categoryUnit: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: Colors.textSecondary,
+    marginLeft: 1,
   },
   categoryName: {
     ...TextStyles.caption,
@@ -846,16 +1061,33 @@ const styles = StyleSheet.create({
   detailModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    padding: Spacing.xl,
   },
   detailModal: {
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.xl,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
     width: '100%',
-    maxWidth: 400,
+    maxHeight: '85%',
+    minHeight: 300,
+  },
+  detailModalScroll: {
+    flexGrow: 1,
+  },
+  detailModalScrollContent: {
+    padding: Spacing.xl,
+    paddingBottom: Spacing['3xl'],
+  },
+  modalHandle: {
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+  },
+  modalHandleBar: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
   },
   detailModalHeader: {
     flexDirection: 'row',
@@ -936,6 +1168,82 @@ const styles = StyleSheet.create({
     ...TextStyles.button,
     color: Colors.carbonHigh,
     marginLeft: Spacing.xs,
+  },
+  
+  // Items section for showing individual scanned products/ingredients
+  itemsSection: {
+    marginBottom: Spacing.lg,
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+  },
+  itemsSectionTitle: {
+    ...TextStyles.body,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  itemLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  itemSeverityDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: Spacing.sm,
+  },
+  itemInfo: {
+    flex: 1,
+  },
+  itemName: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  itemDescription: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  itemRight: {
+    marginLeft: Spacing.sm,
+    alignItems: 'flex-end',
+  },
+  itemCarbon: {
+    ...TextStyles.body,
+    fontWeight: '600',
+  },
+  
+  // Trip/Energy details grid
+  tripDetailsGrid: {
+    gap: Spacing.sm,
+  },
+  tripDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+  },
+  tripDetailLabel: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginLeft: Spacing.sm,
+    marginRight: Spacing.xs,
+    minWidth: 45,
+  },
+  tripDetailValue: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    flex: 1,
   },
 });
 

@@ -9,10 +9,28 @@
  * SETUP: Add EXPO_PUBLIC_GOOGLE_MAPS_API_KEY to your .env file
  */
 
+import Constants from 'expo-constants';
 import { TransportMode } from '../types/activity';
 
-// Get API key from environment
-const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+// Get API key from environment (Expo way)
+const getApiKey = (): string => {
+  // Try expo-constants first (recommended for Expo)
+  const expoKey = Constants.expoConfig?.extra?.googleMapsApiKey;
+  if (expoKey) return expoKey;
+  
+  // Fallback to process.env
+  const envKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+  if (envKey) return envKey;
+  
+  // No API key found - return empty (will fail gracefully)
+  console.warn('Google Maps API key not found. Set EXPO_PUBLIC_GOOGLE_MAPS_API_KEY in .env');
+  return '';
+};
+
+const GOOGLE_MAPS_API_KEY = getApiKey();
+
+// Log API key status for debugging
+console.log('Google Maps API key available:', GOOGLE_MAPS_API_KEY ? 'Yes' : 'No');
 
 /**
  * Location coordinates
@@ -159,18 +177,38 @@ export async function getRoute(
       ? encodeURIComponent(destination)
       : `${destination.lat},${destination.lng}`;
 
+    console.log('📍 Fetching route:', { 
+      origin: typeof origin === 'string' ? origin : 'coords', 
+      destination: typeof destination === 'string' ? destination : 'coords',
+      mode 
+    });
+
     const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destinationStr}&mode=${mode}&key=${GOOGLE_MAPS_API_KEY}`;
 
     const response = await fetch(url);
     const data = await response.json();
 
+    console.log('📍 Google Maps response status:', data.status);
+
     if (data.status !== 'OK' || !data.routes?.[0]) {
-      console.log('Google Maps API error:', data.status);
+      console.log('Google Maps API error:', data.status, data.error_message || '');
+      
+      // Provide user-friendly error info
+      if (data.status === 'NOT_FOUND') {
+        console.log('❌ Route not found - origin or destination could not be geocoded');
+      } else if (data.status === 'ZERO_RESULTS') {
+        console.log('❌ No route found between these locations');
+      } else if (data.status === 'REQUEST_DENIED') {
+        console.log('❌ API key issue - check Directions API is enabled');
+      }
+      
       return null;
     }
 
     const route = data.routes[0];
     const leg = route.legs[0];
+
+    console.log('✅ Route found:', leg.distance.text, leg.duration.text);
 
     return {
       distanceKm: leg.distance.value / 1000,

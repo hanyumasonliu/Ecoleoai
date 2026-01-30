@@ -13,7 +13,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StatusBar,
@@ -24,7 +23,11 @@ import {
   AppState,
   Dimensions,
   Platform,
+  KeyboardAvoidingView,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -1138,23 +1141,33 @@ export function TransportScreen() {
 
       {/* Manual Entry Modal */}
       {showManualEntry && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.manualEntryModal}>
-            <View style={styles.manualEntryHeader}>
-              <Text style={styles.modalTitle}>Add Trip</Text>
-              <TouchableOpacity onPress={() => {
-                setShowManualEntry(false);
-                setTripCalculation(null);
-                setManualOrigin('');
-                setManualDestination('');
-                setManualDistance('');
-                setManualDuration('');
-              }}>
-                <Ionicons name="close" size={24} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.keyboardAvoidingView}
+            >
+              <View style={styles.manualEntryModal}>
+                <View style={styles.manualEntryHeader}>
+                  <Text style={styles.modalTitle}>Add Trip</Text>
+                  <TouchableOpacity onPress={() => {
+                    setShowManualEntry(false);
+                    setTripCalculation(null);
+                    setManualOrigin('');
+                    setManualDestination('');
+                    setManualDistance('');
+                    setManualDuration('');
+                    Keyboard.dismiss();
+                  }}>
+                    <Ionicons name="close" size={24} color={Colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
 
-            <ScrollView style={styles.manualEntryContent} showsVerticalScrollIndicator={false}>
+                <ScrollView 
+                  style={styles.manualEntryContent} 
+                  contentContainerStyle={styles.manualEntryScrollContent}
+                  showsVerticalScrollIndicator={true}
+                  keyboardShouldPersistTaps="handled">
               {/* Transport Mode Selector */}
               <Text style={styles.inputLabel}>Transport Mode</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeScrollView}>
@@ -1622,9 +1635,14 @@ export function TransportScreen() {
                   </TouchableOpacity>
                 </View>
               )}
+              
+              {/* Add extra padding at bottom for keyboard */}
+              <View style={{ height: 100 }} />
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
+      </View>
+    </TouchableWithoutFeedback>
       )}
 
       {/* Trip Confirmation Modal */}
@@ -2229,12 +2247,18 @@ const styles = StyleSheet.create({
     marginLeft: Spacing.md,
   },
   
+  // Keyboard avoiding view for modal
+  keyboardAvoidingView: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  
   // Manual entry modal
   manualEntryModal: {
     backgroundColor: Colors.surface,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
-    maxHeight: '90%',
+    maxHeight: '85%',
     width: '100%',
   },
   manualEntryHeader: {
@@ -2246,8 +2270,11 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   manualEntryContent: {
-    padding: Spacing.base,
-    maxHeight: 500,
+    paddingHorizontal: Spacing.base,
+    flexGrow: 1,
+  },
+  manualEntryScrollContent: {
+    paddingBottom: Spacing['3xl'],
   },
   inputLabel: {
     ...TextStyles.bodySmall,

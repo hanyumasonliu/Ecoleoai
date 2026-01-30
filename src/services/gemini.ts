@@ -22,10 +22,21 @@ import {
  * Usage: Set EXPO_PUBLIC_GEMINI_API_KEY in your .env file
  */
 const getApiKey = (): string | undefined => {
-  // Expo's way to access public env vars
-  return Constants.expoConfig?.extra?.geminiApiKey || 
-         process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+  // For Expo, use the EXPO_PUBLIC_ prefix which is automatically available
+  const key = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+  console.log('Gemini API key available:', !!key, key ? `(${key.substring(0, 10)}...)` : '(not set)');
+  return key;
 };
+
+/**
+ * Available Gemini models to try (in order of preference)
+ * Using vision-capable models for image analysis
+ */
+const VISION_MODELS = [
+  'gemini-2.5-flash',         // Latest available Flash (first choice)
+  'gemini-2.0-flash',         // Fast and reliable (second choice)
+  'gemini-1.5-flash',         // Stable fallback
+];
 
 /**
  * Base URL for Gemini API
@@ -155,61 +166,151 @@ Return ONLY a valid JSON array with this exact format, no other text:
 
 Be realistic with carbon estimates.` : defaultPrompt;
   
-  // If API key is available, attempt real API call
+  // If API key is available, attempt real API call with fallback models
   if (apiKey) {
-    try {
-      const response = await fetch(
-        `${GEMINI_API_BASE}/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        {
+    // Clean the base64 data
+    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    console.log('Image base64 length:', cleanBase64.length);
+    
+    const requestBody = {
+      contents: [{
+        parts: [
+          { text: prompt },
+          { 
+            inline_data: { 
+              mime_type: 'image/jpeg', 
+              data: cleanBase64
+            } 
+          }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 4096,  // Increased to prevent truncation
+      }
+    };
+    
+    // Try each model in order until one works
+    for (const modelName of VISION_MODELS) {
+      try {
+        const url = `${GEMINI_API_BASE}/models/${modelName}:generateContent?key=${apiKey}`;
+        console.log(`Trying Gemini model: ${modelName}`);
+        
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: prompt },
-                { 
-                  inline_data: { 
-                    mime_type: 'image/jpeg', 
-                    data: imageBase64.replace(/^data:image\/\w+;base64,/, '')
-                  } 
-                }
-              ]
-            }],
-            generationConfig: {
-              temperature: 0.4,
-              maxOutputTokens: 1024,
-            }
-          })
-        }
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          body: JSON.stringify(requestBody)
+        });
         
-        if (textContent) {
-          // Extract JSON from response (handle markdown code blocks)
-          const jsonMatch = textContent.match(/\[[\s\S]*\]/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            const objects: AnalyzedObject[] = parsed.map((obj: { name: string; carbonKg: number; description?: string }) => ({
-              id: generateId(),
-              name: obj.name,
-              carbonKg: obj.carbonKg,
-              severity: getSeverity(obj.carbonKg),
-              description: obj.description,
-            }));
+        console.log(`Response from ${modelName}:`, response.status, response.statusText);
+        
+        if (response.ok) {
+          const data = await response.json();
+          const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          
+          if (textContent) {
+            console.log('Gemini text content:', textContent.substring(0, 300));
             
-            return { objects, rawResponse: data };
+            // Strip markdown code fences if present
+            let cleanedContent = textContent
+              .replace(/```json\s*/gi, '')  // Remove ```json
+              .replace(/```\s*/g, '')        // Remove closing ```
+              .trim();
+            
+            // Try to extract JSON array - handle both complete and truncated
+            let jsonString = '';
+            
+            // First try to find complete array
+            const completeMatch = cleanedContent.match(/\[[\s\S]*\]/);
+            if (completeMatch) {
+              jsonString = completeMatch[0];
+            } else {
+              // Array is truncated - find start and repair
+              const arrayStart = cleanedContent.indexOf('[');
+              if (arrayStart >= 0) {
+                jsonString = cleanedContent.substring(arrayStart);
+                console.log('Found truncated array, attempting repair...');
+              }
+            }
+            
+            if (jsonString) {
+              // Repair truncated JSON
+              // Find the last complete object (ends with })
+              const lastCompleteObject = jsonString.lastIndexOf('}');
+              if (lastCompleteObject > 0) {
+                // Check if we need to close the array
+                const afterLastObject = jsonString.substring(lastCompleteObject + 1).trim();
+                if (!afterLastObject.includes(']')) {
+                  jsonString = jsonString.substring(0, lastCompleteObject + 1) + ']';
+                  console.log('Repaired truncated JSON');
+                }
+              }
+              
+              try {
+                const parsed = JSON.parse(jsonString);
+                const objects: AnalyzedObject[] = parsed.map((obj: { name: string; carbonKg: number; description?: string }) => ({
+                  id: generateId(),
+                  name: obj.name || 'Unknown Item',
+                  carbonKg: typeof obj.carbonKg === 'number' ? obj.carbonKg : 1.0,
+                  severity: getSeverity(typeof obj.carbonKg === 'number' ? obj.carbonKg : 1.0),
+                  description: obj.description || '',
+                }));
+                
+                if (objects.length > 0) {
+                  console.log(`✅ Gemini API success with ${modelName}! Found`, objects.length, 'objects');
+                  return { objects, rawResponse: data };
+                }
+              } catch (parseError) {
+                console.log('JSON parse error, trying to extract individual objects...');
+                
+                // Last resort: try to extract individual objects using regex
+                const objectPattern = /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"carbonKg"\s*:\s*([\d.]+)/g;
+                const extractedObjects: AnalyzedObject[] = [];
+                let match;
+                
+                while ((match = objectPattern.exec(jsonString)) !== null) {
+                  extractedObjects.push({
+                    id: generateId(),
+                    name: match[1],
+                    carbonKg: parseFloat(match[2]),
+                    severity: getSeverity(parseFloat(match[2])),
+                    description: '',
+                  });
+                }
+                
+                if (extractedObjects.length > 0) {
+                  console.log(`✅ Extracted ${extractedObjects.length} objects via regex`);
+                  return { objects: extractedObjects, rawResponse: data };
+                }
+              }
+            } else {
+              console.log('No JSON array found in response');
+            }
+          } else {
+            // Check if response was truncated due to MAX_TOKENS
+            const finishReason = data.candidates?.[0]?.finishReason;
+            if (finishReason === 'MAX_TOKENS') {
+              console.log(`Response truncated (MAX_TOKENS) with ${modelName}`);
+            } else {
+              console.log('No text content in response:', JSON.stringify(data).substring(0, 200));
+            }
           }
+        } else {
+          const errorText = await response.text();
+          console.log(`❌ ${modelName} error:`, response.status);
+          console.log('Error details:', errorText.substring(0, 300));
+          // Continue to try next model
         }
+      } catch (error) {
+        console.log(`Error with ${modelName}:`, error);
+        // Continue to try next model
       }
-      
-      // Fall through to mock if API call fails
-      console.log('Gemini API call failed, using mock data');
-    } catch (error) {
-      console.log('Gemini API error, using mock data:', error);
     }
+    
+    // All models failed
+    console.log('All Gemini models failed, using mock data');
+  } else {
+    console.log('No API key available, using mock data');
   }
   
   // Mock implementation: Return random objects from database
@@ -266,8 +367,9 @@ export async function generateCoachMessage(
   // If API key is available, attempt real API call
   if (apiKey) {
     try {
+      const modelName = 'gemini-2.5-flash';
       const response = await fetch(
-        `${GEMINI_API_BASE}/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `${GEMINI_API_BASE}/models/${modelName}:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -294,7 +396,7 @@ export async function generateCoachMessage(
             }],
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 1024,
+              maxOutputTokens: 2048,
             }
           })
         }

@@ -156,11 +156,11 @@ const defaultContext: CarbonContextType = {
   removeActivity: async () => {},
   scanHistory: [],
   getScansForSelectedDate: () => [],
-  remainingBudget: 8,
+  remainingBudget: 20,
   isOverBudget: false,
   budgetProgress: 0,
   categoryTotals: { food: 0, transport: 0, product: 0, energy: 0 },
-  selectedDateRemainingBudget: 8,
+  selectedDateRemainingBudget: 20,
   selectedDateIsOverBudget: false,
   selectedDateBudgetProgress: 0,
   selectedDateCategoryTotals: { food: 0, transport: 0, product: 0, energy: 0 },
@@ -547,9 +547,39 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
   const selectedDateBudgetProgress = selectedDateLog.budgetKg > 0 ? Math.min(selectedDateLog.totalCarbonKg / selectedDateLog.budgetKg, 1) : 0;
 
   /**
-   * Energy baselines from settings
+   * Energy baselines from settings (with fallback and recalculation)
+   * Always recalculate total to ensure consistency
+   * Divide by number of occupants to get per-person carbon
    */
-  const energyBaselines = settings.homeEnergy.baselines;
+  const storedBaselines = settings.homeEnergy?.baselines ?? DEFAULT_ENERGY_BASELINES;
+  const occupants = settings.homeEnergy?.occupants || 1; // Default to 1 to avoid division by zero
+  
+  // Recalculate total from individual baselines to ensure accuracy
+  const totalHouseholdCarbon = 
+    (storedBaselines.electricity?.enabled ? (storedBaselines.electricity?.dailyCarbonKg ?? 0) : 0) +
+    (storedBaselines.naturalGas?.enabled ? (storedBaselines.naturalGas?.dailyCarbonKg ?? 0) : 0) +
+    (storedBaselines.heatingOil?.enabled ? (storedBaselines.heatingOil?.dailyCarbonKg ?? 0) : 0);
+  
+  // Divide by number of occupants to get per-person carbon
+  const perPersonCarbon = totalHouseholdCarbon / occupants;
+  
+  const energyBaselines: EnergyBaselines = {
+    ...storedBaselines,
+    totalDailyCarbonKg: perPersonCarbon,
+  };
+  
+  // Debug: Log baseline values
+  console.log('Energy Baselines:', {
+    electricity: storedBaselines.electricity?.monthlyAmount,
+    electricityDaily: storedBaselines.electricity?.dailyCarbonKg,
+    gas: storedBaselines.naturalGas?.monthlyAmount,
+    gasDaily: storedBaselines.naturalGas?.dailyCarbonKg,
+    oil: storedBaselines.heatingOil?.monthlyAmount,
+    oilDaily: storedBaselines.heatingOil?.dailyCarbonKg,
+    occupants: occupants,
+    totalHousehold: totalHouseholdCarbon,
+    perPerson: perPersonCarbon,
+  });
 
   /**
    * Total daily carbon including baseline
@@ -586,8 +616,9 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
       lastUpdated: new Date().toISOString(),
     };
 
+    const currentBaselines = settings.homeEnergy?.baselines ?? DEFAULT_ENERGY_BASELINES;
     const newBaselines: EnergyBaselines = {
-      ...settings.homeEnergy.baselines,
+      ...currentBaselines,
       [type]: updatedBaseline,
       totalDailyCarbonKg: 0, // Will be recalculated
     };
@@ -598,10 +629,11 @@ export function CarbonProvider({ children }: CarbonProviderProps) {
       (newBaselines.naturalGas.enabled ? newBaselines.naturalGas.dailyCarbonKg : 0) +
       (newBaselines.heatingOil.enabled ? newBaselines.heatingOil.dailyCarbonKg : 0);
 
+    const currentHomeEnergy = settings.homeEnergy ?? DEFAULT_USER_SETTINGS.homeEnergy;
     const newSettings: UserSettings = {
       ...settings,
       homeEnergy: {
-        ...settings.homeEnergy,
+        ...currentHomeEnergy,
         baselines: newBaselines,
       },
     };

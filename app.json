@@ -15,8 +15,14 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.carbonsense.ar",
+      "config": {
+        "googleMapsApiKey": "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY}"
+      },
       "infoPlist": {
-        "NSCameraUsageDescription": "CarbonSense AR needs camera access to scan objects and estimate their carbon footprint."
+        "NSCameraUsageDescription": "GreenSense AR needs camera access to scan objects and estimate their carbon footprint.",
+        "NSLocationWhenInUseUsageDescription": "GreenSense AR needs location access to track your transport activities and calculate carbon emissions.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "GreenSense AR uses background location to automatically track your trips and calculate carbon emissions.",
+        "NSLocationAlwaysUsageDescription": "GreenSense AR uses background location to automatically track your trips even when the app is closed."
       }
     },
     "android": {
@@ -26,8 +32,16 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.carbonsense.ar",
+      "config": {
+        "googleMaps": {
+          "apiKey": "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY}"
+        }
+      },
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION"
       ]
     },
     "web": {
@@ -37,7 +51,15 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "CarbonSense AR needs camera access to scan objects and estimate their carbon footprint."
+          "cameraPermission": "GreenSense AR needs camera access to scan objects and estimate their carbon footprint."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "GreenSense AR uses your location to automatically track transport activities and calculate carbon emissions.",
+          "locationAlwaysPermission": "GreenSense AR uses background location to track your trips even when the app is closed.",
+          "locationWhenInUsePermission": "GreenSense AR uses your location to track transport activities."
         }
       ],
       "expo-barcode-scanner"

@@ -12,7 +12,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StatusBar,
@@ -21,6 +20,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
@@ -124,7 +124,7 @@ const PERIODS = [
  * EnergyScreen Component
  */
 export function EnergyScreen() {
-  const { addEnergyActivity, removeActivity, energyBaselines, updateEnergyBaseline } = useCarbon();
+  const { addEnergyActivity, removeActivity, energyBaselines, updateEnergyBaseline, settings, updateSettings } = useCarbon();
   const [selectedType, setSelectedType] = useState<'electricity' | 'natural_gas' | 'heating_oil'>('electricity');
   const [amount, setAmount] = useState('');
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
@@ -133,6 +133,11 @@ export function EnergyScreen() {
   const [showBaselineForm, setShowBaselineForm] = useState(false);
   const [baselineType, setBaselineType] = useState<'electricity' | 'naturalGas' | 'heatingOil'>('electricity');
   const [baselineAmount, setBaselineAmount] = useState('');
+  const [showOccupantsForm, setShowOccupantsForm] = useState(false);
+  const [occupantsInput, setOccupantsInput] = useState(settings.homeEnergy?.occupants?.toString() || '1');
+  
+  // Current occupants from settings
+  const occupants = settings.homeEnergy?.occupants || 1;
 
   /**
    * Load logs from storage
@@ -150,6 +155,31 @@ export function EnergyScreen() {
     } catch (error) {
       console.error('Error loading energy logs:', error);
     }
+  };
+
+  /**
+   * Update number of occupants
+   */
+  const handleUpdateOccupants = async () => {
+    const num = parseInt(occupantsInput, 10);
+    if (isNaN(num) || num < 1) {
+      Alert.alert('Invalid Number', 'Please enter at least 1 person');
+      return;
+    }
+    
+    await updateSettings({
+      ...settings,
+      homeEnergy: {
+        ...settings.homeEnergy,
+        occupants: num,
+      },
+    });
+    
+    setShowOccupantsForm(false);
+    Alert.alert(
+      '✅ Household Updated',
+      `Carbon footprint will now be divided by ${num} ${num === 1 ? 'person' : 'people'}.`
+    );
   };
 
   const saveLogs = async (newLogs: EnergyLog[]) => {
@@ -380,45 +410,102 @@ export function EnergyScreen() {
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* Summary Card - shows baseline total */}
-          <View style={styles.summaryCard}>
-            <View style={styles.summaryIcon}>
-              <Ionicons name="flash" size={32} color={Colors.categoryEnergy} />
-            </View>
-            <View style={styles.summaryInfo}>
-              <Text style={styles.summaryValue}>
-                {energyBaselines.totalDailyCarbonKg.toFixed(2)} kg
-              </Text>
-              <Text style={styles.summaryLabel}>CO₂e per day (baseline)</Text>
-            </View>
-          </View>
-
           {/* Energy Baseline Section */}
           <View style={styles.baselineSection}>
             <View style={styles.baselineHeader}>
-              <View>
+              <View style={styles.baselineHeaderText}>
                 <Text style={styles.sectionTitle}>🏠 Home Energy Baseline</Text>
                 <Text style={styles.baselineSubtitle}>
-                  Set your monthly utility bills - added to daily footprint
+                  Tap each card to set your monthly utility bills
                 </Text>
               </View>
-              {!showBaselineForm && (
-                <TouchableOpacity
-                  style={styles.editBaselineButton}
-                  onPress={() => setShowBaselineForm(true)}
-                >
-                  <Ionicons name="create-outline" size={20} color={Colors.primary} />
-                </TouchableOpacity>
+              {energyBaselines.totalDailyCarbonKg > 0 && (
+                <View style={styles.baselineTotalBadge}>
+                  <Text style={styles.baselineTotalValue}>
+                    +{energyBaselines.totalDailyCarbonKg.toFixed(1)}
+                  </Text>
+                  <Text style={styles.baselineTotalUnit}>kg/day/person</Text>
+                </View>
               )}
             </View>
+            
+            {/* Household Size */}
+            <TouchableOpacity 
+              style={styles.occupantsCard}
+              onPress={() => {
+                setOccupantsInput(occupants.toString());
+                setShowOccupantsForm(true);
+              }}
+            >
+              <View style={styles.occupantsIcon}>
+                <Ionicons name="people" size={24} color={Colors.primary} />
+              </View>
+              <View style={styles.occupantsInfo}>
+                <Text style={styles.occupantsLabel}>Household Size</Text>
+                <Text style={styles.occupantsValue}>
+                  {occupants} {occupants === 1 ? 'person' : 'people'}
+                </Text>
+              </View>
+              <Text style={styles.occupantsHint}>Carbon ÷ {occupants}</Text>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+            </TouchableOpacity>
+            
+            {/* Occupants Edit Form */}
+            {showOccupantsForm && (
+              <View style={styles.baselineForm}>
+                <View style={styles.baselineFormHeader}>
+                  <Ionicons name="people" size={20} color={Colors.primary} />
+                  <Text style={styles.baselineFormTitle}>Set Household Size</Text>
+                </View>
+                <Text style={styles.formLabel}>Number of People</Text>
+                <TextInput
+                  style={styles.input}
+                  value={occupantsInput}
+                  onChangeText={setOccupantsInput}
+                  keyboardType="numeric"
+                  placeholder="e.g., 2"
+                  placeholderTextColor={Colors.textTertiary}
+                  autoFocus
+                />
+                <Text style={styles.baselineHint}>
+                  💡 Total household energy will be divided by this number
+                </Text>
+                <View style={styles.formActions}>
+                  <TouchableOpacity
+                    style={styles.cancelFormButton}
+                    onPress={() => setShowOccupantsForm(false)}
+                  >
+                    <Text style={styles.cancelFormText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.submitButton}
+                    onPress={handleUpdateOccupants}
+                  >
+                    <Ionicons name="checkmark" size={20} color={Colors.white} />
+                    <Text style={styles.submitText}>Save</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
-            {/* Baseline Cards */}
+            {/* Baseline Cards - Each card is tappable to edit that specific baseline */}
             <View style={styles.baselineCards}>
               {/* Electricity Baseline */}
-              <View style={[
-                styles.baselineCard,
-                energyBaselines.electricity.enabled && styles.baselineCardActive
-              ]}>
+              <TouchableOpacity 
+                style={[
+                  styles.baselineCard,
+                  energyBaselines.electricity.enabled && styles.baselineCardActive,
+                  showBaselineForm && baselineType === 'electricity' && styles.baselineCardEditing
+                ]}
+                onPress={() => {
+                  setBaselineType('electricity');
+                  setBaselineAmount(energyBaselines.electricity.monthlyAmount > 0 
+                    ? energyBaselines.electricity.monthlyAmount.toString() 
+                    : '');
+                  setShowBaselineForm(true);
+                }}
+                activeOpacity={0.7}
+              >
                 <View style={[styles.baselineCardIcon, { backgroundColor: '#EAB30820' }]}>
                   <Ionicons name="flash" size={24} color="#EAB308" />
                 </View>
@@ -434,24 +521,40 @@ export function EnergyScreen() {
                       </Text>
                     </>
                   ) : (
-                    <Text style={styles.baselineCardInactive}>Not set</Text>
+                    <Text style={styles.baselineCardInactive}>Tap to set</Text>
                   )}
                 </View>
-                {energyBaselines.electricity.enabled && (
+                {energyBaselines.electricity.enabled ? (
                   <TouchableOpacity
                     style={styles.baselineClearButton}
-                    onPress={() => handleClearBaseline('electricity')}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleClearBaseline('electricity');
+                    }}
                   >
                     <Ionicons name="close-circle" size={20} color={Colors.textTertiary} />
                   </TouchableOpacity>
+                ) : (
+                  <Ionicons name="add-circle-outline" size={22} color={Colors.primary} />
                 )}
-              </View>
+              </TouchableOpacity>
 
               {/* Natural Gas Baseline */}
-              <View style={[
-                styles.baselineCard,
-                energyBaselines.naturalGas.enabled && styles.baselineCardActive
-              ]}>
+              <TouchableOpacity 
+                style={[
+                  styles.baselineCard,
+                  energyBaselines.naturalGas.enabled && styles.baselineCardActive,
+                  showBaselineForm && baselineType === 'naturalGas' && styles.baselineCardEditing
+                ]}
+                onPress={() => {
+                  setBaselineType('naturalGas');
+                  setBaselineAmount(energyBaselines.naturalGas.monthlyAmount > 0 
+                    ? energyBaselines.naturalGas.monthlyAmount.toString() 
+                    : '');
+                  setShowBaselineForm(true);
+                }}
+                activeOpacity={0.7}
+              >
                 <View style={[styles.baselineCardIcon, { backgroundColor: '#3B82F620' }]}>
                   <Ionicons name="flame" size={24} color="#3B82F6" />
                 </View>
@@ -467,24 +570,40 @@ export function EnergyScreen() {
                       </Text>
                     </>
                   ) : (
-                    <Text style={styles.baselineCardInactive}>Not set</Text>
+                    <Text style={styles.baselineCardInactive}>Tap to set</Text>
                   )}
                 </View>
-                {energyBaselines.naturalGas.enabled && (
+                {energyBaselines.naturalGas.enabled ? (
                   <TouchableOpacity
                     style={styles.baselineClearButton}
-                    onPress={() => handleClearBaseline('naturalGas')}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleClearBaseline('naturalGas');
+                    }}
                   >
                     <Ionicons name="close-circle" size={20} color={Colors.textTertiary} />
                   </TouchableOpacity>
+                ) : (
+                  <Ionicons name="add-circle-outline" size={22} color={Colors.primary} />
                 )}
-              </View>
+              </TouchableOpacity>
 
               {/* Heating Oil Baseline */}
-              <View style={[
-                styles.baselineCard,
-                energyBaselines.heatingOil.enabled && styles.baselineCardActive
-              ]}>
+              <TouchableOpacity 
+                style={[
+                  styles.baselineCard,
+                  energyBaselines.heatingOil.enabled && styles.baselineCardActive,
+                  showBaselineForm && baselineType === 'heatingOil' && styles.baselineCardEditing
+                ]}
+                onPress={() => {
+                  setBaselineType('heatingOil');
+                  setBaselineAmount(energyBaselines.heatingOil.monthlyAmount > 0 
+                    ? energyBaselines.heatingOil.monthlyAmount.toString() 
+                    : '');
+                  setShowBaselineForm(true);
+                }}
+                activeOpacity={0.7}
+              >
                 <View style={[styles.baselineCardIcon, { backgroundColor: '#8B5CF620' }]}>
                   <Ionicons name="water" size={24} color="#8B5CF6" />
                 </View>
@@ -500,66 +619,37 @@ export function EnergyScreen() {
                       </Text>
                     </>
                   ) : (
-                    <Text style={styles.baselineCardInactive}>Not set</Text>
+                    <Text style={styles.baselineCardInactive}>Tap to set</Text>
                   )}
                 </View>
-                {energyBaselines.heatingOil.enabled && (
+                {energyBaselines.heatingOil.enabled ? (
                   <TouchableOpacity
                     style={styles.baselineClearButton}
-                    onPress={() => handleClearBaseline('heatingOil')}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleClearBaseline('heatingOil');
+                    }}
                   >
                     <Ionicons name="close-circle" size={20} color={Colors.textTertiary} />
                   </TouchableOpacity>
+                ) : (
+                  <Ionicons name="add-circle-outline" size={22} color={Colors.primary} />
                 )}
-              </View>
+              </TouchableOpacity>
             </View>
 
-            {/* Baseline Edit Form */}
+            {/* Baseline Edit Form - Shows inline when a card is tapped */}
             {showBaselineForm && (
               <View style={styles.baselineForm}>
-                <Text style={styles.formTitle}>Update Baseline</Text>
-                
-                <Text style={styles.formLabel}>Energy Type</Text>
-                <View style={styles.baselineTypeSelector}>
-                  <TouchableOpacity
-                    style={[
-                      styles.baselineTypeOption,
-                      baselineType === 'electricity' && styles.baselineTypeActive
-                    ]}
-                    onPress={() => setBaselineType('electricity')}
-                  >
-                    <Ionicons name="flash" size={18} color={baselineType === 'electricity' ? Colors.white : '#EAB308'} />
-                    <Text style={[
-                      styles.baselineTypeText,
-                      baselineType === 'electricity' && styles.baselineTypeTextActive
-                    ]}>Electricity</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.baselineTypeOption,
-                      baselineType === 'naturalGas' && styles.baselineTypeActive
-                    ]}
-                    onPress={() => setBaselineType('naturalGas')}
-                  >
-                    <Ionicons name="flame" size={18} color={baselineType === 'naturalGas' ? Colors.white : '#3B82F6'} />
-                    <Text style={[
-                      styles.baselineTypeText,
-                      baselineType === 'naturalGas' && styles.baselineTypeTextActive
-                    ]}>Gas</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.baselineTypeOption,
-                      baselineType === 'heatingOil' && styles.baselineTypeActive
-                    ]}
-                    onPress={() => setBaselineType('heatingOil')}
-                  >
-                    <Ionicons name="water" size={18} color={baselineType === 'heatingOil' ? Colors.white : '#8B5CF6'} />
-                    <Text style={[
-                      styles.baselineTypeText,
-                      baselineType === 'heatingOil' && styles.baselineTypeTextActive
-                    ]}>Oil</Text>
-                  </TouchableOpacity>
+                <View style={styles.baselineFormHeader}>
+                  <Ionicons 
+                    name={baselineType === 'electricity' ? 'flash' : baselineType === 'naturalGas' ? 'flame' : 'water'} 
+                    size={20} 
+                    color={baselineType === 'electricity' ? '#EAB308' : baselineType === 'naturalGas' ? '#3B82F6' : '#8B5CF6'} 
+                  />
+                  <Text style={styles.baselineFormTitle}>
+                    Set {baselineType === 'electricity' ? 'Electricity' : baselineType === 'naturalGas' ? 'Natural Gas' : 'Heating Oil'} Baseline
+                  </Text>
                 </View>
 
                 <Text style={styles.formLabel}>
@@ -570,9 +660,14 @@ export function EnergyScreen() {
                   value={baselineAmount}
                   onChangeText={setBaselineAmount}
                   keyboardType="numeric"
-                  placeholder="e.g., 500"
+                  placeholder={baselineType === 'electricity' ? 'e.g., 500 kWh' : baselineType === 'naturalGas' ? 'e.g., 50 m³' : 'e.g., 100 liters'}
                   placeholderTextColor={Colors.textTertiary}
+                  autoFocus
                 />
+                
+                <Text style={styles.baselineHint}>
+                  💡 Enter the total from your monthly utility bill
+                </Text>
 
                 <View style={styles.formActions}>
                   <TouchableOpacity
@@ -589,7 +684,7 @@ export function EnergyScreen() {
                     onPress={handleUpdateBaseline}
                   >
                     <Ionicons name="checkmark" size={20} color={Colors.white} />
-                    <Text style={styles.submitText}>Save Baseline</Text>
+                    <Text style={styles.submitText}>Save</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -851,6 +946,46 @@ const styles = StyleSheet.create({
   editBaselineButton: {
     padding: Spacing.sm,
   },
+  occupantsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary + '15',
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.primary + '30',
+  },
+  occupantsIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.primary + '20',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  occupantsInfo: {
+    flex: 1,
+  },
+  occupantsLabel: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginBottom: 2,
+  },
+  occupantsValue: {
+    ...TextStyles.bodyBold,
+    color: Colors.textPrimary,
+  },
+  occupantsHint: {
+    ...TextStyles.caption,
+    color: Colors.primary,
+    marginRight: Spacing.sm,
+    backgroundColor: Colors.primary + '20',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
   baselineCards: {
     gap: Spacing.sm,
   },
@@ -867,6 +1002,47 @@ const styles = StyleSheet.create({
     opacity: 1,
     borderWidth: 1,
     borderColor: Colors.primary + '40',
+  },
+  baselineCardEditing: {
+    borderColor: Colors.primary,
+    borderWidth: 2,
+    backgroundColor: Colors.primary + '10',
+  },
+  baselineHeaderText: {
+    flex: 1,
+  },
+  baselineTotalBadge: {
+    backgroundColor: Colors.primary + '20',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.base,
+    alignItems: 'center',
+  },
+  baselineTotalValue: {
+    ...TextStyles.bodyBold,
+    color: Colors.primary,
+    fontSize: 14,
+  },
+  baselineTotalUnit: {
+    ...TextStyles.caption,
+    color: Colors.primary,
+    fontSize: 10,
+  },
+  baselineFormHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  baselineFormTitle: {
+    ...TextStyles.bodyBold,
+    color: Colors.textPrimary,
+  },
+  baselineHint: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.md,
   },
   baselineCardIcon: {
     width: 44,

@@ -10,13 +10,13 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StatusBar,
   Modal,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useCarbon } from '../context/CarbonContext';
@@ -24,7 +24,7 @@ import { TransportScreen } from './TransportScreen';
 import { EnergyScreen } from './EnergyScreen';
 import { Colors, Spacing, BorderRadius, TextStyles } from '../theme';
 import { getDateString } from '../services/dataLayer';
-import { Activity, ActivityCategory } from '../types/activity';
+import { Activity, ActivityCategory, ProductActivity, FoodActivity, TransportActivity, EnergyActivity } from '../types/activity';
 
 type ViewMode = 'day' | 'week';
 
@@ -41,6 +41,23 @@ const CATEGORY_INFO: Record<ActivityCategory, { icon: string; color: string; lab
  * 
  * Shows daily/weekly carbon activity log grouped by category.
  */
+/**
+ * Get week dates centered on today
+ */
+const getWeekDates = () => {
+  const today = new Date();
+  const dayOfWeek = today.getDay(); // 0 = Sunday
+  const dates: Date[] = [];
+  
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(today);
+    date.setDate(today.getDate() - dayOfWeek + i);
+    dates.push(date);
+  }
+  
+  return dates;
+};
+
 export function JourneyScreen() {
   const navigation = useNavigation<any>();
   const { 
@@ -50,20 +67,37 @@ export function JourneyScreen() {
     weeklySummary,
     settings,
     removeActivity,
+    energyBaselines,
   } = useCarbon();
+  
+  // Get the daily baseline carbon (with fallback to 0 if undefined or NaN)
+  const homeEnergyBaselineCarbonKg = 
+    energyBaselines?.totalDailyCarbonKg && !isNaN(energyBaselines.totalDailyCarbonKg) 
+      ? energyBaselines.totalDailyCarbonKg 
+      : 0;
   
   const [viewMode, setViewMode] = useState<ViewMode>('day');
   const [showTransport, setShowTransport] = useState(false);
   const [showEnergy, setShowEnergy] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
+  const [categoryBreakdownMode, setCategoryBreakdownMode] = useState<'daily' | 'weekly'>('daily');
   
   const todayString = getDateString();
   const selectedDateString = getDateString(selectedDate);
   const isToday = selectedDateString === todayString;
   
+  // Get week dates for the calendar
+  const weekDates = getWeekDates();
+  const today = new Date();
+  
   // Navigate to scan screen with food mode
   const handleAddMeal = () => {
-    navigation.navigate('Scan');
+    navigation.navigate('Scan', { scanMode: 'food' });
+  };
+  
+  // Navigate to scan screen with product mode
+  const handleAddProduct = () => {
+    navigation.navigate('Scan', { scanMode: 'product' });
   };
   
   // Handle activity tap to show details
@@ -115,11 +149,21 @@ export function JourneyScreen() {
     return grouped;
   }, [selectedDateLog.activities]);
 
-  // Calculate totals
-  const dailyTotal = selectedDateLog.totalCarbonKg;
-  const dailyBudget = settings.goals.dailyBudgetKg;
-  const weeklyTotal = weeklySummary?.weekTotal || 0;
+  // Calculate totals (including baseline energy) with NaN protection
+  const dailyTotalRaw = selectedDateLog?.totalCarbonKg || 0;
+  const dailyTotal = (isNaN(dailyTotalRaw) ? 0 : dailyTotalRaw) + homeEnergyBaselineCarbonKg;
+  const dailyBudget = settings?.goals?.dailyBudgetKg || 20;
+  const weeklyTotalRaw = weeklySummary?.weekTotal || 0;
+  const weeklyTotal = (isNaN(weeklyTotalRaw) ? 0 : weeklyTotalRaw) + (homeEnergyBaselineCarbonKg * 7);
   const weeklyBudget = dailyBudget * 7;
+  
+  // Safe category totals for selected date
+  const safeCategoryTotals = {
+    product: selectedDateLog?.categoryTotals?.product || 0,
+    food: selectedDateLog?.categoryTotals?.food || 0,
+    transport: selectedDateLog?.categoryTotals?.transport || 0,
+    energy: selectedDateLog?.categoryTotals?.energy || 0,
+  };
 
   // Format time
   const formatTime = (timestamp: string) => {
@@ -130,7 +174,7 @@ export function JourneyScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
       
       {/* Header */}
@@ -202,30 +246,61 @@ export function JourneyScreen() {
             }
           </Text>
           
-          {/* Weekly breakdown */}
-          {viewMode === 'week' && weeklySummary && (
-            <View style={styles.weeklyBreakdown}>
-              <Text style={styles.breakdownTitle}>Daily Breakdown</Text>
-              <View style={styles.weekDays}>
-                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => {
-                  const dayTotal = weeklySummary.dailyTotals[index] || 0;
-                  const isUnderBudget = dayTotal <= dailyBudget;
+          {/* Week Calendar - Clickable days */}
+          {viewMode === 'week' && (
+            <View style={styles.weekCalendarSection}>
+              <Text style={styles.breakdownTitle}>Select Day</Text>
+              <View style={styles.weekCalendar}>
+                {weekDates.map((date, index) => {
+                  const dateStr = getDateString(date);
+                  const isSelected = dateStr === selectedDateString;
+                  const isTodayDate = dateStr === todayString;
+                  const dayTotal = weeklySummary?.dailyTotals?.[index] || 0;
+                  const safeDayTotal = isNaN(dayTotal) ? 0 : dayTotal;
+                  const totalWithBaseline = safeDayTotal + homeEnergyBaselineCarbonKg;
+                  const isUnderBudget = totalWithBaseline <= dailyBudget;
+                  
                   return (
-                    <View key={index} style={styles.weekDayColumn}>
-                      <Text style={styles.weekDayLabel}>{day}</Text>
-                      <View style={styles.weekDayBar}>
+                    <TouchableOpacity
+                      key={dateStr}
+                      style={[
+                        styles.weekCalendarDay,
+                        isSelected && styles.weekCalendarDaySelected,
+                        isTodayDate && styles.weekCalendarDayToday,
+                      ]}
+                      onPress={() => setSelectedDate(date)}
+                    >
+                      <Text style={[
+                        styles.weekCalendarDayLabel,
+                        isSelected && styles.weekCalendarDayLabelSelected,
+                      ]}>
+                        {['S', 'M', 'T', 'W', 'T', 'F', 'S'][date.getDay()]}
+                      </Text>
+                      <Text style={[
+                        styles.weekCalendarDayNumber,
+                        isSelected && styles.weekCalendarDayNumberSelected,
+                      ]}>
+                        {date.getDate()}
+                      </Text>
+                      {/* Carbon indicator bar */}
+                      <View style={styles.weekCalendarDayIndicator}>
                         <View 
                           style={[
-                            styles.weekDayBarFill,
+                            styles.weekCalendarDayIndicatorFill,
                             { 
-                              height: `${Math.min((dayTotal / dailyBudget) * 100, 100)}%`,
+                              height: `${Math.min((totalWithBaseline / dailyBudget) * 100, 100)}%`,
                               backgroundColor: isUnderBudget ? Colors.primary : Colors.carbonHigh,
                             }
                           ]} 
                         />
                       </View>
-                      <Text style={styles.weekDayValue}>{dayTotal.toFixed(0)}</Text>
-                    </View>
+                      <Text style={[
+                        styles.weekCalendarDayCarbon,
+                        isSelected && styles.weekCalendarDayCarbonSelected,
+                      ]}>
+                        {totalWithBaseline.toFixed(0)}
+                      </Text>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
@@ -233,27 +308,165 @@ export function JourneyScreen() {
           )}
         </View>
 
-        {/* Category breakdown for week view */}
-        {viewMode === 'week' && weeklySummary && (
+        {/* Category breakdown for week view with Daily/Weekly toggle */}
+        {viewMode === 'week' && (
           <View style={styles.categoryBreakdownSection}>
-            <Text style={styles.sectionTitle}>Category Breakdown</Text>
-            <View style={styles.categoryBreakdownGrid}>
-              {Object.entries(CATEGORY_INFO).map(([key, info]) => {
-                const categoryKey = key as ActivityCategory;
-                const total = weeklySummary.categoryTotals[categoryKey] || 0;
-                const percentage = weeklyTotal > 0 ? (total / weeklyTotal) * 100 : 0;
-                return (
-                  <View key={key} style={styles.categoryBreakdownCard}>
-                    <View style={[styles.categoryBreakdownIcon, { backgroundColor: info.color + '20' }]}>
-                      <Ionicons name={info.icon as any} size={24} color={info.color} />
-                    </View>
-                    <Text style={styles.categoryBreakdownLabel}>{info.label}</Text>
-                    <Text style={styles.categoryBreakdownValue}>{total.toFixed(1)} kg</Text>
-                    <Text style={styles.categoryBreakdownPercent}>{percentage.toFixed(0)}%</Text>
-                  </View>
-                );
-              })}
+            {/* Header with toggle */}
+            <View style={styles.categoryBreakdownHeader}>
+              <Text style={styles.sectionTitle}>Category Breakdown</Text>
+              <View style={styles.breakdownToggle}>
+                <TouchableOpacity
+                  style={[
+                    styles.breakdownToggleButton,
+                    categoryBreakdownMode === 'daily' && styles.breakdownToggleActive,
+                  ]}
+                  onPress={() => setCategoryBreakdownMode('daily')}
+                >
+                  <Text style={[
+                    styles.breakdownToggleText,
+                    categoryBreakdownMode === 'daily' && styles.breakdownToggleTextActive,
+                  ]}>Daily</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.breakdownToggleButton,
+                    categoryBreakdownMode === 'weekly' && styles.breakdownToggleActive,
+                  ]}
+                  onPress={() => setCategoryBreakdownMode('weekly')}
+                >
+                  <Text style={[
+                    styles.breakdownToggleText,
+                    categoryBreakdownMode === 'weekly' && styles.breakdownToggleTextActive,
+                  ]}>Weekly</Text>
+                </TouchableOpacity>
+              </View>
             </View>
+            
+            {/* Breakdown label */}
+            <Text style={styles.breakdownSubtitle}>
+              {categoryBreakdownMode === 'daily' 
+                ? (isToday ? "Today" : selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }))
+                : "This Week"
+              }
+            </Text>
+            
+            {/* Calculate grand total first for accurate percentages */}
+            {(() => {
+              // Calculate the grand total (sum of all categories including baseline)
+              // Use dailyTotal/weeklyTotal which already include baseline
+              const grandTotal = categoryBreakdownMode === 'daily' ? dailyTotal : weeklyTotal;
+              
+              return (
+                <View style={styles.categoryBreakdownGrid}>
+                  {Object.entries(CATEGORY_INFO).map(([key, info]) => {
+                    const categoryKey = key as ActivityCategory;
+                    let total: number = 0;
+                    
+                    if (categoryBreakdownMode === 'daily') {
+                      // Use selected day's data with safe fallback
+                      total = safeCategoryTotals[categoryKey] || 0;
+                      
+                      // For energy, add the baseline
+                      if (categoryKey === 'energy') {
+                        total = total + homeEnergyBaselineCarbonKg;
+                      }
+                    } else {
+                      // Use weekly data with safe fallback
+                      total = weeklySummary?.categoryTotals?.[categoryKey] || 0;
+                      
+                      // For energy, add the baseline (7 days worth)
+                      if (categoryKey === 'energy') {
+                        total = total + (homeEnergyBaselineCarbonKg * 7);
+                      }
+                    }
+                    
+                    // Ensure total is not NaN
+                    if (isNaN(total)) total = 0;
+                    
+                    const percentage = grandTotal > 0 ? (total / grandTotal) * 100 : 0;
+                    
+                    return (
+                      <View key={key} style={styles.categoryBreakdownCard}>
+                        <View style={[styles.categoryBreakdownIcon, { backgroundColor: info.color + '20' }]}>
+                          <Ionicons name={info.icon as any} size={24} color={info.color} />
+                        </View>
+                        <Text style={styles.categoryBreakdownLabel}>{info.label}</Text>
+                        <Text style={styles.categoryBreakdownValue}>{total.toFixed(1)} kg</Text>
+                        <Text style={styles.categoryBreakdownPercent}>{percentage.toFixed(0)}%</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })()}
+          </View>
+        )}
+        
+        {/* Show selected day's activities in week view */}
+        {viewMode === 'week' && (
+          <View style={styles.selectedDaySection}>
+            <Text style={styles.sectionTitle}>
+              {isToday ? "Today's Activities" : `Activities on ${selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+            </Text>
+            
+            {selectedDateLog.activities.length > 0 || homeEnergyBaselineCarbonKg > 0 ? (
+              <>
+                {/* Energy Baseline indicator */}
+                {homeEnergyBaselineCarbonKg > 0 && (
+                  <View style={styles.baselineIndicator}>
+                    <View style={[styles.categoryIcon, { backgroundColor: CATEGORY_INFO.energy.color + '20' }]}>
+                      <Ionicons name="flash" size={16} color={CATEGORY_INFO.energy.color} />
+                    </View>
+                    <View style={styles.baselineInfo}>
+                      <Text style={styles.baselineName}>Home Energy Baseline</Text>
+                      <Text style={styles.baselineSubtext}>Daily average from utilities</Text>
+                    </View>
+                    <Text style={styles.baselineCarbon}>
+                      {homeEnergyBaselineCarbonKg.toFixed(1)} kg
+                    </Text>
+                  </View>
+                )}
+                
+                {/* Activities list */}
+                {selectedDateLog.activities.slice(0, 5).map((activity) => (
+                  <TouchableOpacity
+                    key={activity.id}
+                    style={styles.weekActivityItem}
+                    onPress={() => handleActivityPress(activity)}
+                  >
+                    <View style={[styles.categoryIcon, { backgroundColor: CATEGORY_INFO[activity.category].color + '20' }]}>
+                      <Ionicons 
+                        name={CATEGORY_INFO[activity.category].icon as any} 
+                        size={16} 
+                        color={CATEGORY_INFO[activity.category].color} 
+                      />
+                    </View>
+                    <View style={styles.weekActivityInfo}>
+                      <Text style={styles.weekActivityName} numberOfLines={1}>
+                        {activity.name}
+                      </Text>
+                      <Text style={styles.weekActivityTime}>
+                        {formatTime(activity.timestamp)}
+                      </Text>
+                    </View>
+                    <Text style={styles.weekActivityCarbon}>
+                      {activity.carbonKg.toFixed(1)} kg
+                    </Text>
+                    <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
+                  </TouchableOpacity>
+                ))}
+                
+                {selectedDateLog.activities.length > 5 && (
+                  <Text style={styles.moreActivitiesText}>
+                    +{selectedDateLog.activities.length - 5} more activities
+                  </Text>
+                )}
+              </>
+            ) : (
+              <View style={styles.noActivitiesDay}>
+                <Text style={styles.noActivitiesDayText}>No activities logged</Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -268,7 +481,7 @@ export function JourneyScreen() {
                 </View>
                 <Text style={styles.categoryTitle}>Products</Text>
                 <Text style={styles.categoryTotal}>
-                  {selectedDateLog.categoryTotals.product.toFixed(1)} kg
+                  {safeCategoryTotals.product.toFixed(1)} kg
                 </Text>
               </View>
               
@@ -296,7 +509,7 @@ export function JourneyScreen() {
               ) : (
                 <View style={styles.emptyCategory}>
                   <Text style={styles.emptyCategoryText}>No products scanned {isToday ? 'today' : 'this day'}</Text>
-                  <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('Scan')}>
+                  <TouchableOpacity style={styles.addButton} onPress={handleAddProduct}>
                     <Ionicons name="scan" size={16} color={Colors.primary} />
                     <Text style={styles.addButtonText}>Scan Product</Text>
                   </TouchableOpacity>
@@ -312,7 +525,7 @@ export function JourneyScreen() {
                 </View>
                 <Text style={styles.categoryTitle}>Food</Text>
                 <Text style={styles.categoryTotal}>
-                  {selectedDateLog.categoryTotals.food.toFixed(1)} kg
+                  {safeCategoryTotals.food.toFixed(1)} kg
                 </Text>
               </View>
               
@@ -359,7 +572,7 @@ export function JourneyScreen() {
                 </View>
                 <Text style={styles.categoryTitle}>Transport</Text>
                 <Text style={styles.categoryTotal}>
-                  {selectedDateLog.categoryTotals.transport.toFixed(1)} kg
+                  {safeCategoryTotals.transport.toFixed(1)} kg
                 </Text>
                 <Ionicons name="chevron-forward" size={20} color={Colors.textTertiary} />
               </View>
@@ -406,10 +619,23 @@ export function JourneyScreen() {
                 </View>
                 <Text style={styles.categoryTitle}>Energy</Text>
                 <Text style={styles.categoryTotal}>
-                  {selectedDateLog.categoryTotals.energy.toFixed(1)} kg
+                  {(safeCategoryTotals.energy + homeEnergyBaselineCarbonKg).toFixed(1)} kg
                 </Text>
                 <Ionicons name="chevron-forward" size={20} color={Colors.textTertiary} />
               </View>
+              
+              {/* Always show baseline if set */}
+              {homeEnergyBaselineCarbonKg > 0 && (
+                <View style={styles.baselineRow}>
+                  <View style={styles.baselineRowInfo}>
+                    <Ionicons name="home" size={14} color={Colors.textSecondary} />
+                    <Text style={styles.baselineRowName}>Home Baseline (daily)</Text>
+                  </View>
+                  <Text style={styles.baselineRowCarbon}>
+                    {homeEnergyBaselineCarbonKg.toFixed(1)} kg
+                  </Text>
+                </View>
+              )}
               
               {activitiesByCategory.energy.length > 0 ? (
                 activitiesByCategory.energy.slice(0, 3).map((activity) => (
@@ -431,15 +657,15 @@ export function JourneyScreen() {
                     </Text>
                   </TouchableOpacity>
                 ))
-              ) : (
+              ) : homeEnergyBaselineCarbonKg === 0 ? (
                 <View style={styles.emptyCategory}>
                   <Text style={styles.emptyCategoryText}>Log home energy usage</Text>
                   <View style={styles.addButton}>
                     <Ionicons name="flash" size={16} color={Colors.primary} />
-                    <Text style={styles.addButtonText}>Log Energy</Text>
+                    <Text style={styles.addButtonText}>Setup Baseline</Text>
                   </View>
                 </View>
-              )}
+              ) : null}
             </TouchableOpacity>
           </>
         )}
@@ -465,6 +691,15 @@ export function JourneyScreen() {
       >
         <View style={styles.detailModalOverlay}>
           <View style={styles.detailModal}>
+            {/* Drag handle */}
+            <View style={styles.modalHandle}>
+              <View style={styles.modalHandleBar} />
+            </View>
+            <ScrollView 
+              style={styles.detailModalScroll}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.detailModalScrollContent}
+            >
             {selectedActivity && (
               <>
                 <View style={styles.detailModalHeader}>
@@ -498,12 +733,12 @@ export function JourneyScreen() {
                         ? selectedActivity.carbonKg.toFixed(4) 
                         : selectedActivity.carbonKg.toFixed(2)}
                     </Text>
-                    <Text style={styles.detailStatLabel}>kg CO₂e</Text>
+                    <Text style={styles.detailStatLabel}>kg CO₂e Total</Text>
                   </View>
-                  {'distanceKm' in selectedActivity && (selectedActivity as any).distanceKm > 0 && (
+                  {'distanceKm' in selectedActivity && (selectedActivity as TransportActivity).distanceKm > 0 && (
                     <View style={styles.detailStat}>
                       <Text style={styles.detailStatValue}>
-                        {((selectedActivity as any).distanceKm as number).toFixed(2)}
+                        {(selectedActivity as TransportActivity).distanceKm.toFixed(2)}
                       </Text>
                       <Text style={styles.detailStatLabel}>km</Text>
                     </View>
@@ -521,6 +756,173 @@ export function JourneyScreen() {
                     </View>
                   )}
                 </View>
+
+                {/* Individual Items for Product Scans */}
+                {selectedActivity.category === 'product' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>
+                      Scanned Items {(selectedActivity as ProductActivity).objects?.length 
+                        ? `(${(selectedActivity as ProductActivity).objects.length})`
+                        : ''}
+                    </Text>
+                    {(selectedActivity as ProductActivity).objects && 
+                     (selectedActivity as ProductActivity).objects.length > 0 ? (
+                      (selectedActivity as ProductActivity).objects.map((item, index) => (
+                        <View key={item.id || index} style={styles.itemRow}>
+                          <View style={styles.itemLeft}>
+                            <View style={[
+                              styles.itemSeverityDot,
+                              { backgroundColor: getSeverityColor(item.severity) }
+                            ]} />
+                            <View style={styles.itemInfo}>
+                              <Text style={styles.itemName}>{item.name}</Text>
+                              {item.description && (
+                                <Text style={styles.itemDescription} numberOfLines={2}>
+                                  {item.description}
+                                </Text>
+                              )}
+                            </View>
+                          </View>
+                          <View style={styles.itemRight}>
+                            <Text style={[
+                              styles.itemCarbon,
+                              { color: getSeverityColor(item.severity) }
+                            ]}>
+                              {item.carbonKg < 0.01 
+                                ? item.carbonKg.toFixed(4) 
+                                : item.carbonKg.toFixed(2)} kg
+                            </Text>
+                          </View>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.itemDescription}>
+                        Item details not available for this scan.
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* Ingredients for Food Scans */}
+                {selectedActivity.category === 'food' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>
+                      Food Details {(selectedActivity as FoodActivity).ingredients?.length 
+                        ? `(${(selectedActivity as FoodActivity).ingredients!.length} ingredients)`
+                        : ''}
+                    </Text>
+                    {(selectedActivity as FoodActivity).foodCategory && (
+                      <View style={styles.itemRow}>
+                        <View style={styles.itemLeft}>
+                          <View style={[styles.itemSeverityDot, { backgroundColor: Colors.categoryFood }]} />
+                          <View style={styles.itemInfo}>
+                            <Text style={styles.itemName}>Category</Text>
+                            <Text style={styles.itemDescription}>
+                              {(selectedActivity as FoodActivity).foodCategory.charAt(0).toUpperCase() + 
+                               (selectedActivity as FoodActivity).foodCategory.slice(1)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    )}
+                    {(selectedActivity as FoodActivity).mealType && (
+                      <View style={styles.itemRow}>
+                        <View style={styles.itemLeft}>
+                          <View style={[styles.itemSeverityDot, { backgroundColor: Colors.categoryFood }]} />
+                          <View style={styles.itemInfo}>
+                            <Text style={styles.itemName}>Meal Type</Text>
+                            <Text style={styles.itemDescription}>
+                              {(selectedActivity as FoodActivity).mealType!.charAt(0).toUpperCase() + 
+                               (selectedActivity as FoodActivity).mealType!.slice(1)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    )}
+                    {(selectedActivity as FoodActivity).ingredients && 
+                     (selectedActivity as FoodActivity).ingredients!.length > 0 ? (
+                      (selectedActivity as FoodActivity).ingredients!.map((ingredient, index) => (
+                        <View key={index} style={styles.itemRow}>
+                          <View style={styles.itemLeft}>
+                            <View style={[styles.itemSeverityDot, { backgroundColor: Colors.categoryFood }]} />
+                            <View style={styles.itemInfo}>
+                              <Text style={styles.itemName}>{ingredient.name}</Text>
+                              <Text style={styles.itemDescription}>{ingredient.quantity}</Text>
+                            </View>
+                          </View>
+                          <View style={styles.itemRight}>
+                            <Text style={[styles.itemCarbon, { color: Colors.categoryFood }]}>
+                              {ingredient.carbonKg.toFixed(2)} kg
+                            </Text>
+                          </View>
+                        </View>
+                      ))
+                    ) : (
+                      !(selectedActivity as FoodActivity).foodCategory && !(selectedActivity as FoodActivity).mealType && (
+                        <Text style={styles.itemDescription}>
+                          Detailed ingredient breakdown not available for this entry.
+                        </Text>
+                      )
+                    )}
+                  </View>
+                )}
+
+                {/* Transport Details */}
+                {selectedActivity.category === 'transport' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>Trip Details</Text>
+                    <View style={styles.tripDetailsGrid}>
+                      {(selectedActivity as TransportActivity).startLocation && (
+                        <View style={styles.tripDetailRow}>
+                          <Ionicons name="location" size={16} color={Colors.carbonLow} />
+                          <Text style={styles.tripDetailLabel}>From:</Text>
+                          <Text style={styles.tripDetailValue} numberOfLines={1}>
+                            {(selectedActivity as TransportActivity).startLocation}
+                          </Text>
+                        </View>
+                      )}
+                      {(selectedActivity as TransportActivity).endLocation && (
+                        <View style={styles.tripDetailRow}>
+                          <Ionicons name="flag" size={16} color={Colors.carbonHigh} />
+                          <Text style={styles.tripDetailLabel}>To:</Text>
+                          <Text style={styles.tripDetailValue} numberOfLines={1}>
+                            {(selectedActivity as TransportActivity).endLocation}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
+
+                {/* Energy Details */}
+                {selectedActivity.category === 'energy' && (
+                  <View style={styles.itemsSection}>
+                    <Text style={styles.itemsSectionTitle}>Energy Details</Text>
+                    <View style={styles.tripDetailsGrid}>
+                      <View style={styles.tripDetailRow}>
+                        <Ionicons name="flash" size={16} color={Colors.categoryEnergy} />
+                        <Text style={styles.tripDetailLabel}>Type:</Text>
+                        <Text style={styles.tripDetailValue}>
+                          {(selectedActivity as EnergyActivity).energyType.replace('_', ' ')}
+                        </Text>
+                      </View>
+                      <View style={styles.tripDetailRow}>
+                        <Ionicons name="speedometer" size={16} color={Colors.categoryEnergy} />
+                        <Text style={styles.tripDetailLabel}>Amount:</Text>
+                        <Text style={styles.tripDetailValue}>
+                          {(selectedActivity as EnergyActivity).energyKwh.toFixed(1)} kWh
+                        </Text>
+                      </View>
+                      <View style={styles.tripDetailRow}>
+                        <Ionicons name="calendar" size={16} color={Colors.categoryEnergy} />
+                        <Text style={styles.tripDetailLabel}>Period:</Text>
+                        <Text style={styles.tripDetailValue}>
+                          {(selectedActivity as EnergyActivity).period}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
                 
                 <View style={styles.detailInfo}>
                   <View style={styles.detailInfoRow}>
@@ -534,16 +936,16 @@ export function JourneyScreen() {
                     <View style={styles.detailInfoRow}>
                       <Ionicons name="car-outline" size={16} color={Colors.textSecondary} />
                       <Text style={styles.detailInfoText}>
-                        Mode: {(selectedActivity as any).mode}
+                        Mode: {(selectedActivity as TransportActivity).mode}
                       </Text>
                     </View>
                   )}
                   
-                  {'durationMinutes' in selectedActivity && (selectedActivity as any).durationMinutes > 0 && (
+                  {'durationMinutes' in selectedActivity && (selectedActivity as TransportActivity).durationMinutes && (selectedActivity as TransportActivity).durationMinutes! > 0 && (
                     <View style={styles.detailInfoRow}>
                       <Ionicons name="timer-outline" size={16} color={Colors.textSecondary} />
                       <Text style={styles.detailInfoText}>
-                        Duration: {Math.round((selectedActivity as any).durationMinutes)} min
+                        Duration: {Math.round((selectedActivity as TransportActivity).durationMinutes!)} min
                       </Text>
                     </View>
                   )}
@@ -560,6 +962,7 @@ export function JourneyScreen() {
                 </View>
               </>
             )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -599,6 +1002,16 @@ export function JourneyScreen() {
       </Modal>
     </SafeAreaView>
   );
+}
+
+// Helper function for severity colors
+function getSeverityColor(severity: 'low' | 'medium' | 'high'): string {
+  switch (severity) {
+    case 'low': return Colors.carbonLow;
+    case 'medium': return Colors.carbonMedium;
+    case 'high': return Colors.carbonHigh;
+    default: return Colors.textSecondary;
+  }
 }
 
 const styles = StyleSheet.create({
@@ -644,7 +1057,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.base,
-    paddingBottom: Spacing['3xl'],
+    paddingBottom: Spacing.xl,
   },
   
   // Summary card
@@ -691,8 +1104,8 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   
-  // Weekly breakdown
-  weeklyBreakdown: {
+  // Week Calendar (clickable)
+  weekCalendarSection: {
     marginTop: Spacing.base,
     paddingTop: Spacing.base,
     borderTopWidth: 1,
@@ -703,45 +1116,212 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginBottom: Spacing.md,
   },
-  weekDays: {
+  weekCalendar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  weekDayColumn: {
+  weekCalendarDay: {
     alignItems: 'center',
     flex: 1,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: 2,
+    borderRadius: BorderRadius.sm,
+    marginHorizontal: 2,
   },
-  weekDayLabel: {
+  weekCalendarDaySelected: {
+    backgroundColor: Colors.primary + '20',
+  },
+  weekCalendarDayToday: {
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  weekCalendarDayLabel: {
     ...TextStyles.caption,
     color: Colors.textTertiary,
+    marginBottom: 2,
+  },
+  weekCalendarDayLabelSelected: {
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  weekCalendarDayNumber: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '600',
     marginBottom: Spacing.xs,
   },
-  weekDayBar: {
-    width: 20,
-    height: 60,
+  weekCalendarDayNumberSelected: {
+    color: Colors.primary,
+  },
+  weekCalendarDayIndicator: {
+    width: 16,
+    height: 40,
     backgroundColor: Colors.backgroundTertiary,
-    borderRadius: 10,
+    borderRadius: 8,
     justifyContent: 'flex-end',
     overflow: 'hidden',
-    marginBottom: Spacing.xs,
+    marginBottom: 4,
   },
-  weekDayBarFill: {
+  weekCalendarDayIndicatorFill: {
     width: '100%',
-    borderRadius: 10,
+    borderRadius: 8,
   },
-  weekDayValue: {
+  weekCalendarDayCarbon: {
     ...TextStyles.caption,
     color: Colors.textSecondary,
+    fontSize: 9,
+  },
+  weekCalendarDayCarbonSelected: {
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  
+  // Selected day section in week view
+  selectedDaySection: {
+    marginTop: Spacing.xl,
+  },
+  weekActivityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+    marginBottom: Spacing.xs,
+  },
+  weekActivityInfo: {
+    flex: 1,
+    marginLeft: Spacing.sm,
+  },
+  weekActivityName: {
+    ...TextStyles.bodySmall,
+    color: Colors.textPrimary,
+  },
+  weekActivityTime: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
     fontSize: 10,
+  },
+  weekActivityCarbon: {
+    ...TextStyles.bodySmall,
+    color: Colors.carbonMedium,
+    fontWeight: '600',
+    marginRight: Spacing.xs,
+  },
+  moreActivitiesText: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: Spacing.sm,
+  },
+  noActivitiesDay: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.xl,
+    alignItems: 'center',
+  },
+  noActivitiesDayText: {
+    ...TextStyles.body,
+    color: Colors.textTertiary,
+  },
+  
+  // Baseline indicator
+  baselineIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+    marginBottom: Spacing.xs,
+    borderLeftWidth: 3,
+    borderLeftColor: CATEGORY_INFO.energy.color,
+  },
+  baselineInfo: {
+    flex: 1,
+    marginLeft: Spacing.sm,
+  },
+  baselineName: {
+    ...TextStyles.bodySmall,
+    color: Colors.textPrimary,
+  },
+  baselineSubtext: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    fontSize: 10,
+  },
+  baselineCarbon: {
+    ...TextStyles.bodySmall,
+    color: CATEGORY_INFO.energy.color,
+    fontWeight: '600',
+  },
+  
+  // Baseline row in day view
+  baselineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    backgroundColor: Colors.carbonMediumBg + '30',
+    marginHorizontal: -Spacing.base,
+    marginTop: -Spacing.xs,
+    paddingHorizontal: Spacing.base,
+    marginBottom: Spacing.xs,
+  },
+  baselineRowInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  baselineRowName: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginLeft: Spacing.xs,
+  },
+  baselineRowCarbon: {
+    ...TextStyles.body,
+    color: CATEGORY_INFO.energy.color,
+    fontWeight: '600',
   },
   
   // Category breakdown for week
   categoryBreakdownSection: {
     marginBottom: Spacing.xl,
   },
+  categoryBreakdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
   sectionTitle: {
     ...TextStyles.h5,
     color: Colors.textPrimary,
+  },
+  breakdownToggle: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.sm,
+    padding: 2,
+  },
+  breakdownToggleButton: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.xs,
+  },
+  breakdownToggleActive: {
+    backgroundColor: Colors.primary,
+  },
+  breakdownToggleText: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+  },
+  breakdownToggleTextActive: {
+    color: Colors.white,
+    fontWeight: '600',
+  },
+  breakdownSubtitle: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
     marginBottom: Spacing.md,
   },
   categoryBreakdownGrid: {
@@ -893,16 +1473,33 @@ const styles = StyleSheet.create({
   detailModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    padding: Spacing.xl,
   },
   detailModal: {
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.xl,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
     width: '100%',
-    maxWidth: 400,
+    maxHeight: '85%',
+    minHeight: 300,
+  },
+  detailModalScroll: {
+    flexGrow: 1,
+  },
+  detailModalScrollContent: {
+    padding: Spacing.xl,
+    paddingBottom: Spacing['3xl'],
+  },
+  modalHandle: {
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+  },
+  modalHandleBar: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
   },
   detailModalHeader: {
     flexDirection: 'row',
@@ -983,6 +1580,82 @@ const styles = StyleSheet.create({
     ...TextStyles.button,
     color: Colors.carbonHigh,
     marginLeft: Spacing.xs,
+  },
+  
+  // Items section for showing individual scanned products/ingredients
+  itemsSection: {
+    marginBottom: Spacing.lg,
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+  },
+  itemsSectionTitle: {
+    ...TextStyles.body,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  itemLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  itemSeverityDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: Spacing.sm,
+  },
+  itemInfo: {
+    flex: 1,
+  },
+  itemName: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  itemDescription: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  itemRight: {
+    marginLeft: Spacing.sm,
+    alignItems: 'flex-end',
+  },
+  itemCarbon: {
+    ...TextStyles.body,
+    fontWeight: '600',
+  },
+  
+  // Trip/Energy details grid
+  tripDetailsGrid: {
+    gap: Spacing.sm,
+  },
+  tripDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+  },
+  tripDetailLabel: {
+    ...TextStyles.bodySmall,
+    color: Colors.textSecondary,
+    marginLeft: Spacing.sm,
+    marginRight: Spacing.xs,
+    minWidth: 45,
+  },
+  tripDetailValue: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    flex: 1,
   },
 });
 

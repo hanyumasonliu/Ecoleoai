@@ -303,7 +303,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   name: 'Carbon Hero',
   joinedDate: new Date().toISOString(),
   goals: {
-    dailyBudgetKg: 8, // ~3 tonnes/year target
+    dailyBudgetKg: 20, // ~7 tonnes/year target
     weeklyTargetKg: 56,
     reductionTargetPercent: 10,
     streakGoalDays: 7,

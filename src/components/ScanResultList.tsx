@@ -11,6 +11,8 @@ import {
   StyleSheet,
   ScrollView,
   ViewStyle,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AnalyzedObject } from '../types/carbon';
@@ -28,6 +30,10 @@ interface ScanResultListProps {
   showTotal?: boolean;
   /** Optional custom styles */
   style?: ViewStyle;
+  /** Callback when user wants to remove an item (enables edit mode) */
+  onRemoveItem?: (objectId: string) => void;
+  /** Whether items can be removed */
+  editable?: boolean;
 }
 
 /**
@@ -93,9 +99,31 @@ export function ScanResultList({
   title = 'Detected Objects',
   showTotal = true,
   style,
+  onRemoveItem,
+  editable = false,
 }: ScanResultListProps) {
   const totalCarbon = calculateTotal(objects);
   const severity = getOverallSeverity(totalCarbon);
+  
+  /**
+   * Handle remove item with confirmation
+   */
+  const handleRemoveItem = (item: AnalyzedObject) => {
+    if (!onRemoveItem) return;
+    
+    Alert.alert(
+      'Remove Item',
+      `Remove "${item.name}" from this scan?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Remove', 
+          style: 'destructive',
+          onPress: () => onRemoveItem(item.id)
+        },
+      ]
+    );
+  };
   
   const severityColors = {
     low: Colors.carbonLow,
@@ -193,12 +221,25 @@ export function ScanResultList({
                 </View>
               </View>
               
-              {/* Carbon value */}
-              <View style={styles.itemCarbon}>
-                <Text style={[styles.itemCarbonValue, { color: getSeverityColor(object.severity) }]}>
-                  {formatCarbon(object.carbonKg)}
-                </Text>
-                <Text style={styles.itemCarbonUnit}>CO₂e</Text>
+              {/* Carbon value and remove button */}
+              <View style={styles.itemRight}>
+                <View style={styles.itemCarbon}>
+                  <Text style={[styles.itemCarbonValue, { color: getSeverityColor(object.severity) }]}>
+                    {formatCarbon(object.carbonKg)}
+                  </Text>
+                  <Text style={styles.itemCarbonUnit}>CO₂e</Text>
+                </View>
+                
+                {/* Remove button - only shown when editable */}
+                {editable && onRemoveItem && (
+                  <TouchableOpacity
+                    style={styles.removeButton}
+                    onPress={() => handleRemoveItem(object)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="close-circle" size={24} color={Colors.carbonHigh} />
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </View>
@@ -291,6 +332,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: 18,
   },
+  itemRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   itemCarbon: {
     alignItems: 'flex-end',
     minWidth: 70,
@@ -303,6 +348,10 @@ const styles = StyleSheet.create({
     ...TextStyles.caption,
     color: Colors.textTertiary,
     marginTop: 2,
+  },
+  removeButton: {
+    marginLeft: Spacing.sm,
+    padding: Spacing.xs,
   },
   
   // Total summary styles

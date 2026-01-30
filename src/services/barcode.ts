@@ -95,38 +95,72 @@ function estimateCarbonFromCategory(category: string): number {
 }
 
 /**
- * Look up product from Open Food Facts API
+ * Cache for barcode lookups to ensure consistent results
+ */
+const barcodeCache: Map<string, BarcodeProduct | null> = new Map();
+
+/**
+ * Look up product from Open Food Facts API with caching
  */
 async function lookupOpenFoodFacts(barcode: string): Promise<BarcodeProduct | null> {
+  // Check cache first for consistent results
+  if (barcodeCache.has(barcode)) {
+    console.log('Using cached barcode result for:', barcode);
+    return barcodeCache.get(barcode) || null;
+  }
+  
   try {
+    console.log('Fetching from Open Food Facts:', barcode);
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
     const response = await fetch(
       `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
       {
         headers: {
           'User-Agent': 'GreenSense AR - Carbon Tracker/2.0',
         },
+        signal: controller.signal,
       }
     );
     
-    if (!response.ok) return null;
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      console.log('Open Food Facts response not OK:', response.status);
+      barcodeCache.set(barcode, null);
+      return null;
+    }
     
     const data = await response.json();
+    console.log('Open Food Facts status:', data.status);
     
     if (data.status === 1 && data.product) {
       const product = data.product;
-      return {
+      const result: BarcodeProduct = {
         barcode,
         name: product.product_name || product.generic_name || 'Unknown Product',
         brand: product.brands,
-        category: product.categories_tags?.[0] || product.main_category,
+        category: product.categories_tags?.[0] || product.main_category || product.categories,
         imageUrl: product.image_url,
         found: true,
       };
+      
+      console.log('✅ Product found:', result.name, 'Category:', result.category);
+      barcodeCache.set(barcode, result);
+      return result;
     }
     
+    console.log('Product not in database');
+    barcodeCache.set(barcode, null);
     return null;
-  } catch (error) {
-    console.error('Open Food Facts lookup error:', error);
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('Open Food Facts request timed out');
+    } else {
+      console.error('Open Food Facts lookup error:', error);
+    }
     return null;
   }
 }

@@ -9,7 +9,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StatusBar,
@@ -18,6 +17,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useHistory } from '../context/HistoryContext';
 import { syncProfileWithHistory } from '../services/storage';
@@ -26,6 +26,51 @@ import { UserProfile } from '../types/carbon';
 import { Colors, Spacing, BorderRadius, TextStyles, Shadows } from '../theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+/**
+ * Carbon Pricing Data (2024-2025 rates)
+ * Sources: EU ETS, World Bank Carbon Pricing Dashboard
+ */
+const CARBON_PRICING = {
+  // EU Emissions Trading System - what companies actually pay
+  euETS: 85, // €/tonne → ~$92 USD
+  
+  // US Social Cost of Carbon (EPA estimate for policy decisions)
+  socialCost: 51, // $/tonne - what damage each tonne causes society
+  
+  // Voluntary carbon offset market (what you'd pay to offset)
+  voluntaryOffset: 15, // $/tonne - average offset price
+  
+  // Sweden carbon tax - highest in world
+  swedenTax: 130, // $/tonne
+  
+  // Canada carbon tax (2024)
+  canadaTax: 65, // CAD/tonne → ~$48 USD
+};
+
+/**
+ * Calculate impact equivalencies
+ */
+const calculateImpactEquivalencies = (carbonKg: number) => {
+  const carbonTonnes = carbonKg / 1000;
+  
+  return {
+    // Financial impacts
+    euCarbonTax: carbonTonnes * CARBON_PRICING.euETS,
+    socialCost: carbonTonnes * CARBON_PRICING.socialCost,
+    offsetCost: carbonTonnes * CARBON_PRICING.voluntaryOffset,
+    
+    // If you emitted at corporate rate for a year
+    annualCorporateCost: (carbonKg * 52) / 1000 * CARBON_PRICING.euETS,
+    
+    // Physical equivalencies
+    carKm: carbonKg / 0.21, // Average car emits 0.21 kg/km
+    flightHours: carbonKg / 90, // ~90 kg CO₂ per hour of flying
+    smartphoneCharges: carbonKg / 0.005, // ~5g per charge
+    beefMeals: carbonKg / 6.5, // ~6.5 kg CO₂ per beef meal
+    treeMonths: carbonKg / 1.8, // A tree absorbs ~22kg/year = 1.8kg/month
+  };
+};
 
 /**
  * Educational content about carbon footprints
@@ -151,8 +196,11 @@ export function ProfileScreen() {
 
   const levelInfo = getLevelInfo();
   
+  // Calculate impact equivalencies
+  const impact = calculateImpactEquivalencies(summary.totalCarbonKg);
+  
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
       
       {/* Screen title */}
@@ -214,6 +262,136 @@ export function ProfileScreen() {
           </View>
           <Text style={styles.featuredStatLabel}>Total Carbon Tracked</Text>
         </View>
+        
+        {/* Carbon Cost Impact Card */}
+        {summary.totalCarbonKg > 0 && (
+          <View style={styles.impactCard}>
+            <View style={styles.impactHeader}>
+              <Ionicons name="cash-outline" size={22} color={Colors.primary} />
+              <Text style={styles.impactTitle}>Your Carbon in Real Terms</Text>
+            </View>
+            
+            {/* If You Were A Company Section */}
+            <View style={styles.corporateSection}>
+              <Text style={styles.sectionLabel}>💼 If you were a company...</Text>
+              <View style={styles.mainCostRow}>
+                <View style={styles.mainCostItem}>
+                  <Text style={styles.mainCostValue}>
+                    ${impact.euCarbonTax.toFixed(2)}
+                  </Text>
+                  <Text style={styles.mainCostNote}>
+                    EU Carbon Tax
+                  </Text>
+                  <Text style={styles.mainCostExplain}>
+                    Companies pay €85/tonne to EU
+                  </Text>
+                </View>
+                <View style={styles.mainCostDivider} />
+                <View style={styles.mainCostItem}>
+                  <Text style={styles.mainCostValue}>
+                    ${impact.socialCost.toFixed(2)}
+                  </Text>
+                  <Text style={styles.mainCostNote}>
+                    Damage to Society
+                  </Text>
+                  <Text style={styles.mainCostExplain}>
+                    US EPA: $51 damage/tonne
+                  </Text>
+                </View>
+              </View>
+            </View>
+            
+            {/* Offset cost - clearer explanation */}
+            <View style={styles.offsetSection}>
+              <Text style={styles.sectionLabel}>🌱 Want to go carbon neutral?</Text>
+              <View style={styles.offsetRow}>
+                <View style={styles.offsetContent}>
+                  <Text style={styles.offsetAmount}>${impact.offsetCost.toFixed(2)}</Text>
+                  <Text style={styles.offsetExplain}>
+                    Buy carbon credits at ~$15/tonne{'\n'}
+                    (funds tree planting, renewable energy)
+                  </Text>
+                </View>
+                <TouchableOpacity 
+                  style={styles.offsetButton}
+                  onPress={() => Linking.openURL('https://www.goldstandard.org/')}
+                >
+                  <Text style={styles.offsetButtonText}>Learn More</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            {/* Equivalencies - CLEAR that these are alternatives */}
+            <View style={styles.equivalenciesSection}>
+              <Text style={styles.sectionLabel}>
+                📊 Your {summary.totalCarbonKg.toFixed(0)} kg equals ANY ONE of:
+              </Text>
+              <Text style={styles.equivalenciesNote}>
+                (not combined — each is equivalent to your total)
+              </Text>
+              
+              <View style={styles.equivalencyCard}>
+                <View style={styles.equivalencyRow}>
+                  <Ionicons name="car" size={24} color={Colors.categoryTransport} />
+                  <View style={styles.equivalencyInfo}>
+                    <Text style={styles.equivalencyMainValue}>
+                      {impact.carKm >= 1000 
+                        ? `${(impact.carKm / 1000).toFixed(1)}k km` 
+                        : `${impact.carKm.toFixed(0)} km`}
+                    </Text>
+                    <Text style={styles.equivalencyDescription}>
+                      driving in an average car
+                    </Text>
+                  </View>
+                  <Text style={styles.orBadge}>OR</Text>
+                </View>
+                
+                <View style={styles.equivalencyRow}>
+                  <Ionicons name="airplane" size={24} color={Colors.info} />
+                  <View style={styles.equivalencyInfo}>
+                    <Text style={styles.equivalencyMainValue}>
+                      {impact.flightHours.toFixed(1)} hours
+                    </Text>
+                    <Text style={styles.equivalencyDescription}>
+                      of flying (economy class)
+                    </Text>
+                  </View>
+                  <Text style={styles.orBadge}>OR</Text>
+                </View>
+                
+                <View style={styles.equivalencyRow}>
+                  <Ionicons name="restaurant" size={24} color={Colors.carbonHigh} />
+                  <View style={styles.equivalencyInfo}>
+                    <Text style={styles.equivalencyMainValue}>
+                      {impact.beefMeals.toFixed(0)} beef meals
+                    </Text>
+                    <Text style={styles.equivalencyDescription}>
+                      (beef is high-emission food)
+                    </Text>
+                  </View>
+                  <Text style={styles.orBadge}>OR</Text>
+                </View>
+                
+                <View style={[styles.equivalencyRow, styles.equivalencyRowLast]}>
+                  <Ionicons name="leaf" size={24} color={Colors.carbonLow} />
+                  <View style={styles.equivalencyInfo}>
+                    <Text style={styles.equivalencyMainValue}>
+                      {impact.treeMonths.toFixed(0)} months
+                    </Text>
+                    <Text style={styles.equivalencyDescription}>
+                      for 1 tree to absorb this CO₂
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+            
+            {/* Source note */}
+            <Text style={styles.sourceNote}>
+              💡 Data from: EU Emissions Trading System, US EPA, IPCC
+            </Text>
+          </View>
+        )}
         
         {/* Stats Grid - 2x2 */}
         <View style={styles.statsRow}>
@@ -450,6 +628,154 @@ const styles = StyleSheet.create({
     ...TextStyles.caption,
     color: Colors.textTertiary,
     marginTop: Spacing.xs,
+  },
+  
+  // Impact Card
+  impactCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.base,
+    marginBottom: Spacing.base,
+  },
+  impactHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  impactTitle: {
+    ...TextStyles.h5,
+    color: Colors.textPrimary,
+    marginLeft: Spacing.sm,
+  },
+  sectionLabel: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '600',
+    marginBottom: Spacing.sm,
+  },
+  corporateSection: {
+    marginBottom: Spacing.md,
+  },
+  mainCostRow: {
+    flexDirection: 'row',
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+  },
+  mainCostItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  mainCostDivider: {
+    width: 1,
+    backgroundColor: Colors.border,
+    marginHorizontal: Spacing.sm,
+  },
+  mainCostValue: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  mainCostNote: {
+    ...TextStyles.bodySmall,
+    color: Colors.textPrimary,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  mainCostExplain: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    fontSize: 10,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  offsetSection: {
+    marginBottom: Spacing.md,
+  },
+  offsetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.carbonLowBg,
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+  },
+  offsetContent: {
+    flex: 1,
+  },
+  offsetAmount: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.carbonLow,
+  },
+  offsetExplain: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  offsetButton: {
+    backgroundColor: Colors.carbonLow,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.base,
+  },
+  offsetButtonText: {
+    ...TextStyles.caption,
+    color: Colors.white,
+    fontWeight: '600',
+  },
+  equivalenciesSection: {
+    marginBottom: Spacing.md,
+  },
+  equivalenciesNote: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    fontStyle: 'italic',
+    marginBottom: Spacing.md,
+  },
+  equivalencyCard: {
+    backgroundColor: Colors.backgroundTertiary,
+    borderRadius: BorderRadius.base,
+    overflow: 'hidden',
+  },
+  equivalencyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  equivalencyRowLast: {
+    borderBottomWidth: 0,
+  },
+  equivalencyInfo: {
+    flex: 1,
+    marginLeft: Spacing.md,
+  },
+  equivalencyMainValue: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '700',
+  },
+  equivalencyDescription: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+  },
+  orBadge: {
+    ...TextStyles.caption,
+    color: Colors.primary,
+    fontWeight: '700',
+    backgroundColor: Colors.primary + '20',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    overflow: 'hidden',
+  },
+  sourceNote: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    fontSize: 10,
+    textAlign: 'center',
   },
   
   // Stats row
