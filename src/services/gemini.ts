@@ -124,11 +124,14 @@ export async function analyzeImageWithGemini(
 
   const apiKey = getApiKey();
 
-  // Build the prompt based on mode
+  // Build the prompt
   // Get the knowledge base string
   const kbString = getFormattedDatabase();
 
-  const defaultPrompt = `You are a carbon footprint analysis expert. Analyze this image and identify 3-5 visible objects. 
+  // Base instruction based on user input or default
+  const baseInstruction = customPrompt || `You are a carbon footprint analysis expert. Analyze this image and identify 3-5 visible objects.`;
+
+  const prompt = `${baseInstruction}
 
 CARBON DATABASE:
 Use this provided carbon database for carbon estimates if the object matches or is very similar.
@@ -151,19 +154,6 @@ INSTRUCTIONS:
 ]
 
 Be realistic with carbon estimates based on manufacturing, materials, and typical usage.`;
-
-  const prompt = customPrompt ? `${customPrompt}
-
-Return ONLY a valid JSON array with this exact format, no other text:
-[
-  {
-    "name": "Item Name",
-    "carbonKg": 123.4,
-    "description": "Brief explanation of carbon impact"
-  }
-]
-
-Be realistic with carbon estimates.` : defaultPrompt;
 
   // If API key is available, attempt real API call with fallback models
   if (apiKey) {
