@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Location & Transport Detection Service
+ * Carbon Tracer AI - Location & Transport Detection Service
  * 
  * Hybrid automatic transport detection using GPS location tracking.
  * Detects trips, calculates distance, and suggests transport mode based on speed.
@@ -11,13 +11,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TransportMode } from '../types/activity';
 
 // Task name for background location tracking
-const LOCATION_TASK_NAME = 'greensense-location-tracking';
+const LOCATION_TASK_NAME = 'carbontracer-location-tracking';
 
 // Storage keys
 const STORAGE_KEYS = {
-  CURRENT_TRIP: '@greensense_current_trip',
-  TRIP_HISTORY: '@greensense_trip_history',
-  TRACKING_ENABLED: '@greensense_tracking_enabled',
+  CURRENT_TRIP: '@carbontracer_current_trip',
+  TRIP_HISTORY: '@carbontracer_trip_history',
+  TRACKING_ENABLED: '@carbontracer_tracking_enabled',
 };
 
 /**

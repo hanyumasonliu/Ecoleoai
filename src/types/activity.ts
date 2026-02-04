@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Activity Type Definitions
+ * Carbon Tracer AR - Activity Type Definitions
  * 
  * Types for carbon activities, daily logs, and category tracking.
  */

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "GreenSense AR",
-    "slug": "greensense-ar",
+    "name": "Carbon Tracer AI",
+    "slug": "carbon-tracer-ai",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,15 +14,15 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.carbonsense.ar",
+      "bundleIdentifier": "com.carbontracer.ai",
       "config": {
         "googleMapsApiKey": "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY}"
       },
       "infoPlist": {
-        "NSCameraUsageDescription": "GreenSense AR needs camera access to scan objects and estimate their carbon footprint.",
-        "NSLocationWhenInUseUsageDescription": "GreenSense AR needs location access to track your transport activities and calculate carbon emissions.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "GreenSense AR uses background location to automatically track your trips and calculate carbon emissions.",
-        "NSLocationAlwaysUsageDescription": "GreenSense AR uses background location to automatically track your trips even when the app is closed."
+        "NSCameraUsageDescription": "Carbon Tracer AI needs camera access to scan objects and estimate their carbon footprint.",
+        "NSLocationWhenInUseUsageDescription": "Carbon Tracer AI needs location access to track your transport activities and calculate carbon emissions.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Carbon Tracer AI uses background location to automatically track your trips and calculate carbon emissions.",
+        "NSLocationAlwaysUsageDescription": "Carbon Tracer AI uses background location to automatically track your trips even when the app is closed."
       }
     },
     "android": {
@@ -31,7 +31,7 @@
         "backgroundColor": "#0A0F14"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.carbonsense.ar",
+      "package": "com.carbontracer.ai",
       "config": {
         "googleMaps": {
           "apiKey": "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY}"
@@ -51,15 +51,15 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "GreenSense AR needs camera access to scan objects and estimate their carbon footprint."
+          "cameraPermission": "Carbon Tracer AI needs camera access to scan objects and estimate their carbon footprint."
         }
       ],
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "GreenSense AR uses your location to automatically track transport activities and calculate carbon emissions.",
-          "locationAlwaysPermission": "GreenSense AR uses background location to track your trips even when the app is closed.",
-          "locationWhenInUsePermission": "GreenSense AR uses your location to track transport activities."
+          "locationAlwaysAndWhenInUsePermission": "Carbon Tracer AI uses your location to automatically track transport activities and calculate carbon emissions.",
+          "locationAlwaysPermission": "Carbon Tracer AI uses background location to track your trips even when the app is closed.",
+          "locationWhenInUsePermission": "Carbon Tracer AI uses your location to track transport activities."
         }
       ],
       "expo-barcode-scanner"

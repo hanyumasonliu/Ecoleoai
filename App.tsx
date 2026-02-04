@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Main App Entry Point
+ * Carbon Tracer AR - Main App Entry Point
  * 
  * An AI-powered greenhouse gas tracker for the Gemini 3 Hackathon.
  * 

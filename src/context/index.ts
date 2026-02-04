@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Context Index
+ * Carbon Tracer AR - Context Index
  * 
  * Central export for all context providers.
  */

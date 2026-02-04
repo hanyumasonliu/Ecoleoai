@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Maps Service
+ * Carbon Tracer AI - Maps Service
  * 
  * Google Maps integration for:
  * - Route calculation (distance, time)

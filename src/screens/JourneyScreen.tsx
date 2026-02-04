@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Journey Screen
+ * Carbon Tracer AR - Journey Screen
  * 
  * Daily and weekly activity log showing carbon emissions by category.
  * Shows consistent data from CarbonContext.

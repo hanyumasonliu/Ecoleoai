@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Home Screen
+ * Carbon Tracer AR - Home Screen
  * 
  * Main dashboard showing daily carbon budget, category breakdown,
  * and recent activity. Shows data for the selected date.
@@ -153,7 +153,7 @@ export function HomeScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Ionicons name="leaf" size={24} color={Colors.primary} />
-          <Text style={styles.appName}>GreenSense</Text>
+          <Text style={styles.appName}>Carbon Tracer</Text>
         </View>
         {streak > 0 && (
           <View style={styles.streakBadge}>

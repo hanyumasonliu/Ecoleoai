@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Root Navigator
+ * Carbon Tracer AI - Root Navigator
  * 
  * Bottom tab navigation with 5 tabs:
  * Home, Scan, Journey, Stats, Profile

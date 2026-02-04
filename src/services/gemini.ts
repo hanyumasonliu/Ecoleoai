@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Gemini API Service
+ * Carbon Tracer AI - Gemini API Service
  * 
  * Handles communication with Google's Gemini Vision API for image analysis
  * and coach message generation.
@@ -15,6 +15,7 @@ import {
   HistorySummary,
   CoachMessage,
 } from '../types/carbon';
+import { getFormattedDatabase, CARBON_DATABASE } from '../data/carbonDatabase';
 
 /**
  * Get the Gemini API key from environment variables
@@ -60,41 +61,26 @@ const generateId = (): string => {
 };
 
 /**
- * Mock data for different object types with realistic carbon footprints
- * Based on lifecycle carbon analysis data
- */
-const MOCK_OBJECTS_DATABASE: Omit<AnalyzedObject, 'id'>[] = [
-  // Electronics
-  { name: 'Laptop', carbonKg: 300, severity: 'high', description: 'Manufacturing and usage over 4 years' },
-  { name: 'Smartphone', carbonKg: 70, severity: 'medium', description: 'Production accounts for 80% of emissions' },
-  { name: 'Computer Monitor', carbonKg: 200, severity: 'high', description: 'Energy-intensive manufacturing' },
-  { name: 'Wireless Headphones', carbonKg: 8, severity: 'low', description: 'Small electronics, low impact' },
-  { name: 'Tablet', carbonKg: 100, severity: 'medium', description: 'Similar to small laptop' },
-  { name: 'Smart Watch', carbonKg: 25, severity: 'medium', description: 'Compact device, moderate impact' },
-  
-  // Clothing
-  { name: 'Cotton T-Shirt', carbonKg: 7, severity: 'low', description: 'Water and farming impact' },
-  { name: 'Jeans', carbonKg: 33, severity: 'medium', description: 'Denim production is water-intensive' },
   { name: 'Hoodie', carbonKg: 12, severity: 'medium', description: 'Fleece material has moderate impact' },
   { name: 'Leather Jacket', carbonKg: 130, severity: 'high', description: 'Leather has high environmental cost' },
   { name: 'Sneakers', carbonKg: 14, severity: 'medium', description: 'Materials and manufacturing' },
-  
+
   // Food & Beverages
   { name: 'Plastic Water Bottle', carbonKg: 0.08, severity: 'low', description: 'Single-use plastic' },
   { name: 'Coffee Cup (Disposable)', carbonKg: 0.11, severity: 'low', description: 'Paper and plastic lid' },
   { name: 'Reusable Water Bottle', carbonKg: 0.5, severity: 'low', description: 'Offsets after ~50 uses' },
   { name: 'Food Container (Plastic)', carbonKg: 0.2, severity: 'low', description: 'Petroleum-based materials' },
-  
+
   // Furniture
   { name: 'Office Chair', carbonKg: 72, severity: 'medium', description: 'Metal and fabric production' },
   { name: 'Wooden Desk', carbonKg: 50, severity: 'medium', description: 'Depends on wood source' },
   { name: 'Bookshelf', carbonKg: 40, severity: 'medium', description: 'Wood or particle board' },
-  
+
   // Transportation
   { name: 'Bicycle', carbonKg: 240, severity: 'high', description: 'But saves carbon in transport!' },
   { name: 'Backpack', carbonKg: 15, severity: 'medium', description: 'Synthetic materials' },
   { name: 'Suitcase', carbonKg: 25, severity: 'medium', description: 'Plastic shell and fabric' },
-  
+
   // Home & Living
   { name: 'LED Light Bulb', carbonKg: 1.5, severity: 'low', description: 'Low impact, long lifespan' },
   { name: 'Paper Notebook', carbonKg: 0.9, severity: 'low', description: 'Paper production impact' },
@@ -135,52 +121,55 @@ export async function analyzeImageWithGemini(
 ): Promise<GeminiAnalysisResponse> {
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
-  
-  const apiKey = getApiKey();
-  
-  // Build the prompt based on mode
-  const defaultPrompt = `You are a carbon footprint analysis expert. Analyze this image and identify 3-5 visible objects. 
-For each object, estimate its lifetime carbon footprint in kg CO2e.
 
-Return ONLY a valid JSON array with this exact format, no other text:
+  const apiKey = getApiKey();
+
+  // Build the prompt
+  // Get the knowledge base string
+  const kbString = getFormattedDatabase();
+
+  // Base instruction based on user input or default
+  const baseInstruction = customPrompt || `You are a carbon footprint analysis expert. Analyze this image and identify 3-5 visible objects.`;
+
+  const prompt = `${baseInstruction}
+
+CARBON DATABASE:
+Use this provided carbon database for carbon estimates if the object matches or is very similar.
+${kbString}
+
+INSTRUCTIONS:
+1. Identify visible objects in the image.
+2. For each object, estimate its lifetime carbon footprint in kg CO2e.
+   - PRIORITY: Check the CARBON DATABASE above.
+   - SCALING: If the item matches but the portion/quantity differs, scale the carbon value linearly. 
+     (Example: If Database has "Salmon 500g = 5.4kg", and you see 250g, use 2.7kg).
+   - FALLBACK: If not in Carbon Database, estimate based on material/manufacturing/typical usage.
+3. Return ONLY a valid JSON array with this exact format, no other text:
 [
   {
     "name": "Object Name",
     "carbonKg": 123.4,
-    "description": "Brief explanation of carbon impact"
+    "description": "Brief explanation (mention if value came from Carbon Database)"
   }
 ]
 
 Be realistic with carbon estimates based on manufacturing, materials, and typical usage.`;
 
-  const prompt = customPrompt ? `${customPrompt}
-
-Return ONLY a valid JSON array with this exact format, no other text:
-[
-  {
-    "name": "Item Name",
-    "carbonKg": 123.4,
-    "description": "Brief explanation of carbon impact"
-  }
-]
-
-Be realistic with carbon estimates.` : defaultPrompt;
-  
   // If API key is available, attempt real API call with fallback models
   if (apiKey) {
     // Clean the base64 data
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
     console.log('Image base64 length:', cleanBase64.length);
-    
+
     const requestBody = {
       contents: [{
         parts: [
           { text: prompt },
-          { 
-            inline_data: { 
-              mime_type: 'image/jpeg', 
+          {
+            inline_data: {
+              mime_type: 'image/jpeg',
               data: cleanBase64
-            } 
+            }
           }
         ]
       }],
@@ -189,37 +178,37 @@ Be realistic with carbon estimates.` : defaultPrompt;
         maxOutputTokens: 4096,  // Increased to prevent truncation
       }
     };
-    
+
     // Try each model in order until one works
     for (const modelName of VISION_MODELS) {
       try {
         const url = `${GEMINI_API_BASE}/models/${modelName}:generateContent?key=${apiKey}`;
         console.log(`Trying Gemini model: ${modelName}`);
-        
+
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody)
         });
-        
+
         console.log(`Response from ${modelName}:`, response.status, response.statusText);
-        
+
         if (response.ok) {
           const data = await response.json();
           const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          
+
           if (textContent) {
             console.log('Gemini text content:', textContent.substring(0, 300));
-            
+
             // Strip markdown code fences if present
             let cleanedContent = textContent
               .replace(/```json\s*/gi, '')  // Remove ```json
               .replace(/```\s*/g, '')        // Remove closing ```
               .trim();
-            
+
             // Try to extract JSON array - handle both complete and truncated
             let jsonString = '';
-            
+
             // First try to find complete array
             const completeMatch = cleanedContent.match(/\[[\s\S]*\]/);
             if (completeMatch) {
@@ -232,7 +221,7 @@ Be realistic with carbon estimates.` : defaultPrompt;
                 console.log('Found truncated array, attempting repair...');
               }
             }
-            
+
             if (jsonString) {
               // Repair truncated JSON
               // Find the last complete object (ends with })
@@ -245,7 +234,7 @@ Be realistic with carbon estimates.` : defaultPrompt;
                   console.log('Repaired truncated JSON');
                 }
               }
-              
+
               try {
                 const parsed = JSON.parse(jsonString);
                 const objects: AnalyzedObject[] = parsed.map((obj: { name: string; carbonKg: number; description?: string }) => ({
@@ -255,19 +244,19 @@ Be realistic with carbon estimates.` : defaultPrompt;
                   severity: getSeverity(typeof obj.carbonKg === 'number' ? obj.carbonKg : 1.0),
                   description: obj.description || '',
                 }));
-                
+
                 if (objects.length > 0) {
                   console.log(`✅ Gemini API success with ${modelName}! Found`, objects.length, 'objects');
                   return { objects, rawResponse: data };
                 }
               } catch (parseError) {
                 console.log('JSON parse error, trying to extract individual objects...');
-                
+
                 // Last resort: try to extract individual objects using regex
                 const objectPattern = /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"carbonKg"\s*:\s*([\d.]+)/g;
                 const extractedObjects: AnalyzedObject[] = [];
                 let match;
-                
+
                 while ((match = objectPattern.exec(jsonString)) !== null) {
                   extractedObjects.push({
                     id: generateId(),
@@ -277,7 +266,7 @@ Be realistic with carbon estimates.` : defaultPrompt;
                     description: '',
                   });
                 }
-                
+
                 if (extractedObjects.length > 0) {
                   console.log(`✅ Extracted ${extractedObjects.length} objects via regex`);
                   return { objects: extractedObjects, rawResponse: data };
@@ -306,25 +295,30 @@ Be realistic with carbon estimates.` : defaultPrompt;
         // Continue to try next model
       }
     }
-    
+
     // All models failed
     console.log('All Gemini models failed, using mock data');
   } else {
     console.log('No API key available, using mock data');
   }
-  
-  // Mock implementation: Return random objects from database
-  const numberOfObjects = 3 + Math.floor(Math.random() * 3); // 3-5 objects
-  const shuffled = [...MOCK_OBJECTS_DATABASE].sort(() => Math.random() - 0.5);
+
+  // Fallback to mock data if API fails or is not configured
+  console.log('All Gemini models failed, using mock data from Carbon Database');
+  const numberOfObjects = 3 + Math.floor(Math.random() * 3);
+
+  // Shuffle the Carbon Database and pick random items
+  const shuffled = [...CARBON_DATABASE].sort(() => Math.random() - 0.5);
   const selectedObjects = shuffled.slice(0, numberOfObjects);
-  
+
   const objects: AnalyzedObject[] = selectedObjects.map(obj => ({
-    ...obj,
     id: generateId(),
-    // Add slight variation to carbon values for realism
-    carbonKg: Math.round(obj.carbonKg * (0.9 + Math.random() * 0.2) * 100) / 100,
+    name: obj.name,
+    // Add small random variation to make it feel "live"
+    carbonKg: Math.round(obj.carbonKg * (0.95 + Math.random() * 0.1) * 100) / 100,
+    severity: obj.carbonKg < 1 ? 'low' : obj.carbonKg < 10 ? 'medium' : 'high',
+    description: `Estimated based on ${obj.category} data (${obj.unit}). Source: ${obj.source}`,
   }));
-  
+
   return { objects };
 }
 
@@ -361,9 +355,9 @@ export async function generateCoachMessage(
 ): Promise<CoachMessage> {
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 500));
-  
+
   const apiKey = getApiKey();
-  
+
   // If API key is available, attempt real API call
   if (apiKey) {
     try {
@@ -401,11 +395,11 @@ export async function generateCoachMessage(
           })
         }
       );
-      
+
       if (response.ok) {
         const data = await response.json();
         const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        
+
         if (textContent) {
           const jsonMatch = textContent.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
@@ -414,15 +408,15 @@ export async function generateCoachMessage(
           }
         }
       }
-      
+
       console.log('Gemini coach API call failed, using mock data');
     } catch (error) {
       console.log('Gemini coach API error, using mock data:', error);
     }
   }
-  
+
   // Mock implementation: Generate contextual advice based on history
-  
+
   // Default message for new users
   if (summary.totalScans === 0) {
     return {
@@ -435,38 +429,38 @@ export async function generateCoachMessage(
       encouragement: "Every scan is a step toward a more sustainable future!",
     };
   }
-  
+
   // Generate contextual advice based on scanning patterns
   const messages: string[] = [];
   const tips: string[] = [];
-  
+
   // Analyze scanning patterns
-  const hasElectronics = summary.topObjectTypes.some(type => 
+  const hasElectronics = summary.topObjectTypes.some(type =>
     ['Laptop', 'Smartphone', 'Monitor', 'Tablet'].some(e => type.includes(e))
   );
-  
+
   const hasClothing = summary.topObjectTypes.some(type =>
     ['Shirt', 'Jeans', 'Hoodie', 'Jacket', 'Sneakers'].some(c => type.includes(c))
   );
-  
+
   if (hasElectronics) {
     messages.push(`You've been scanning electronics, which tend to have significant carbon footprints. The good news? You can reduce their impact by keeping devices longer, repairing instead of replacing, and recycling properly when they reach end of life.`);
     tips.push('Extend device lifespan by using protective cases');
     tips.push('Consider refurbished devices for your next purchase');
   }
-  
+
   if (hasClothing) {
     messages.push(`Your clothing scans show awareness of fashion's environmental impact. Fast fashion is responsible for 10% of global carbon emissions! Choosing quality pieces that last, buying secondhand, and proper care can make a big difference.`);
     tips.push('Wash clothes in cold water to extend their life');
     tips.push('Explore thrift stores for unique, low-impact finds');
   }
-  
+
   if (summary.totalCarbonKg > 500) {
     messages.push(`You've tracked ${summary.totalCarbonKg.toFixed(0)} kg CO₂e across your scans. That's a significant amount of awareness! Now focus on the highest-impact items and look for ways to reduce, reuse, or offset.`);
   } else if (summary.totalCarbonKg > 0) {
     messages.push(`You've tracked ${summary.totalCarbonKg.toFixed(0)} kg CO₂e so far. Keep scanning to build a complete picture of your carbon footprint across different areas of your life.`);
   }
-  
+
   // Add general tips if needed
   if (tips.length < 3) {
     const generalTips = [
@@ -477,13 +471,13 @@ export async function generateCoachMessage(
     ];
     tips.push(...generalTips.slice(0, 3 - tips.length));
   }
-  
+
   const encouragement = summary.totalScans > 10
     ? "You're becoming a carbon awareness champion!"
     : summary.totalScans > 5
-    ? "Great progress! Keep exploring your carbon footprint."
-    : "You're on the right track. Every scan increases your awareness!";
-  
+      ? "Great progress! Keep exploring your carbon footprint."
+      : "You're on the right track. Every scan increases your awareness!";
+
   return {
     message: messages.join('\n\n') || "Keep scanning items around you to learn about their carbon footprint. Understanding impact is the first step to making better choices!",
     tips: tips.slice(0, 3),

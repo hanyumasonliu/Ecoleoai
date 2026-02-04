@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Energy Screen
+ * Carbon Tracer AR - Energy Screen
  * 
  * Log home energy usage:
  * - Electricity

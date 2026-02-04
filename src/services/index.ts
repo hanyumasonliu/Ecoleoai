@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Services Index
+ * Carbon Tracer AR - Services Index
  * 
  * Central export for all services.
  */

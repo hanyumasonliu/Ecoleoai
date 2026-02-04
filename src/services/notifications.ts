@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Notifications Service
+ * Carbon Tracer AR - Notifications Service
  * 
  * Handles push notifications for:
  * - Daily budget warnings

@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - User Type Definitions
+ * Carbon Tracer AR - User Type Definitions
  * 
  * Types for user settings, profile, achievements, and goals.
  */

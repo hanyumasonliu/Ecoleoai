@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Item Detail Screen
+ * Carbon Tracer AR - Item Detail Screen
  * 
  * Full analysis view for a scanned item showing:
  * - Item info with quantity adjuster

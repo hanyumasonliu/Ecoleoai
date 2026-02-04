@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Types Index
+ * Carbon Tracer AR - Types Index
  * 
  * Central export for all type definitions.
  */

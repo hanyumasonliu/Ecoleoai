@@ -496,7 +496,7 @@ export function ProfileScreen() {
         <View style={styles.appInfo}>
           <View style={styles.appLogoRow}>
             <Ionicons name="leaf" size={20} color={Colors.primary} />
-            <Text style={styles.appName}>GreenSense AR</Text>
+            <Text style={styles.appName}>Carbon Tracer AR</Text>
           </View>
           <Text style={styles.appVersion}>Version 2.0.0 • Gemini 3 Hackathon</Text>
         </View>
