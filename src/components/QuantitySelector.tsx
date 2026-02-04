@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Quantity Selector Component
+ * Carbon Tracer AR - Quantity Selector Component
  * 
  * Allows users to adjust the quantity of scanned items.
  */

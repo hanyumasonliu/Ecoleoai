@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Data Layer
+ * Carbon Tracer AI - Data Layer
  * 
  * Unified data access layer designed for easy migration to Supabase.
  * Currently uses AsyncStorage for local persistence.
@@ -20,15 +20,15 @@ import { UserSettings, DEFAULT_USER_SETTINGS } from '../types/user';
 // ============================================================================
 const STORAGE_KEYS = {
   // Core data
-  DAILY_LOGS: '@greensense_daily_logs',
-  SCAN_HISTORY: '@greensense_scan_history',
-  TRIP_HISTORY: '@greensense_trip_history',
-  USER_SETTINGS: '@greensense_user_settings',
-  USER_PROFILE: '@greensense_user_profile',
+  DAILY_LOGS: '@carbontracer_daily_logs',
+  SCAN_HISTORY: '@carbontracer_scan_history',
+  TRIP_HISTORY: '@carbontracer_trip_history',
+  USER_SETTINGS: '@carbontracer_user_settings',
+  USER_PROFILE: '@carbontracer_user_profile',
   
   // Meta
-  LAST_SYNC: '@greensense_last_sync',
-  DATA_VERSION: '@greensense_data_version',
+  LAST_SYNC: '@carbontracer_last_sync',
+  DATA_VERSION: '@carbontracer_data_version',
 };
 
 // Current data version for migrations

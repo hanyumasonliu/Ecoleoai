@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Gemini API Service
+ * Carbon Tracer AI - Gemini API Service
  * 
  * Handles communication with Google's Gemini Vision API for image analysis
  * and coach message generation.

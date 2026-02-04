@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Travel Impact Model API Service
+ * Carbon Tracer AI - Travel Impact Model API Service
  * 
  * Google's Travel Impact Model API provides accurate carbon emission
  * estimates for flights based on real-world data including:

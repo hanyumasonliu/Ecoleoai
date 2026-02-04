@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Carbon Database
+ * Carbon Tracer AI - Carbon Database
  * 
  * A collection of reference carbon footprint values to help the AI
  * make more accurate estimations.

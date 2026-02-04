@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Carbon Context
+ * Carbon Tracer AR - Carbon Context
  * 
  * Global state management for daily carbon budget, activities, and tracking.
  * Uses dataLayer for persistence (designed for easy Supabase migration).

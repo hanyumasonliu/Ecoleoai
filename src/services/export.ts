@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Data Export Service
+ * Carbon Tracer AI - Data Export Service
  * 
  * Export user data as CSV or JSON for backup and analysis.
  */
@@ -115,7 +115,7 @@ function summaryToCSV(summary: HistorySummary): string {
  */
 function generateFileName(format: ExportFormat): string {
   const date = new Date().toISOString().split('T')[0];
-  return `greensense-export-${date}.${format}`;
+  return `carbontracer-export-${date}.${format}`;
 }
 
 /**
@@ -171,7 +171,7 @@ export async function exportData(options: ExportOptions): Promise<string | null>
       // CSV format - combine all sections
       const sections: string[] = [];
       
-      sections.push('=== GreenSense AR Data Export ===');
+      sections.push('=== Carbon Tracer AI Data Export ===');
       sections.push(`Export Date: ${data.exportDate}`);
       sections.push('');
       
@@ -220,7 +220,7 @@ export async function shareExport(fileUri: string): Promise<boolean> {
 
     await Sharing.shareAsync(fileUri, {
       mimeType: fileUri.endsWith('.json') ? 'application/json' : 'text/csv',
-      dialogTitle: 'Export GreenSense Data',
+      dialogTitle: 'Export Carbon Tracer Data',
     });
 
     return true;

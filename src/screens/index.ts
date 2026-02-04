@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Screens Index
+ * Carbon Tracer AR - Screens Index
  * 
  * Central export for all screen components.
  */

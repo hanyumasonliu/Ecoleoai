@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Stats Screen
+ * Carbon Tracer AR - Stats Screen
  * 
  * Advanced analytics dashboard with:
  * - Time series charts (weekly/monthly/yearly)

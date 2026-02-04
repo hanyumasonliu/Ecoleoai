@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Transport Screen
+ * Carbon Tracer AR - Transport Screen
  * 
  * GPS-based automatic transport tracking with live map.
  * - Real-time location tracking on map
@@ -866,7 +866,7 @@ export function TransportScreen() {
           </View>
           <Text style={styles.permissionTitle}>Enable Location</Text>
           <Text style={styles.permissionText}>
-            GreenSense needs location access to automatically detect your trips
+            Carbon Tracer needs location access to automatically detect your trips
             and calculate transport emissions.
           </Text>
           <TouchableOpacity

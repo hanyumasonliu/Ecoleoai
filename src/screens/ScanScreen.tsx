@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Scan Screen
+ * Carbon Tracer AR - Scan Screen
  * 
  * Enhanced camera scanning interface with multiple scan modes,
  * AR-style overlay, and context input options.
@@ -564,7 +564,7 @@ export function ScanScreen({ route }: { route?: { params?: { scanMode?: ScanMode
           </View>
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionText}>
-            GreenSense AR needs camera access to scan objects and estimate their carbon footprint.
+            Carbon Tracer AR needs camera access to scan objects and estimate their carbon footprint.
           </Text>
           <TouchableOpacity
             style={styles.permissionButton}
@@ -603,7 +603,7 @@ export function ScanScreen({ route }: { route?: { params?: { scanMode?: ScanMode
             <View style={styles.topBarContent}>
               <View style={styles.titleContainer}>
                 <Ionicons name="leaf" size={24} color={Colors.primary} />
-                <Text style={styles.title}>GreenSense</Text>
+                <Text style={styles.title}>Carbon Tracer</Text>
               </View>
               <View style={styles.topBarActions}>
                 <TouchableOpacity 

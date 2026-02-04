@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Barcode Lookup Service
+ * Carbon Tracer AR - Barcode Lookup Service
  * 
  * Looks up product information from barcodes using Open Food Facts
  * and other product databases to estimate carbon footprint.
@@ -119,7 +119,7 @@ async function lookupOpenFoodFacts(barcode: string): Promise<BarcodeProduct | nu
       `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
       {
         headers: {
-          'User-Agent': 'GreenSense AR - Carbon Tracker/2.0',
+          'User-Agent': 'Carbon Tracer AR - Carbon Tracker/2.0',
         },
         signal: controller.signal,
       }

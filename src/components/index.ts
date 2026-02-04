@@ -1,5 +1,5 @@
 /**
- * GreenSense AR - Components Index
+ * Carbon Tracer AR - Components Index
  * 
  * Central export for all reusable components.
  */
