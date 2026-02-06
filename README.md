@@ -1,40 +1,106 @@
-# CarbonSense AR 🌱
+# Carbon Tracer AI 🌍
 
-> Point your camera at everyday objects and see an AR overlay of their estimated lifetime carbon footprint.
+> Track your daily carbon footprint with AI-powered scanning, GPS transport tracking, and energy monitoring.
 
-An AI-powered carbon footprint AR scanner built for the **Gemini 3 Hackathon**.
+An intelligent greenhouse gas tracker built for the **Gemini 3 Hackathon** — powered by Google's Gemini Vision API.
 
-![CarbonSense AR](./assets/icon.png)
+![Carbon Tracer AI](./assets/icon.png)
 
 ## 🚀 Features
 
-- **📸 AR Scanner** - Point your camera at objects to analyze their carbon footprint
-- **🤖 AI-Powered Analysis** - Uses Google Gemini Vision API for intelligent object detection
-- **📊 History Tracking** - View all your past scans with detailed carbon breakdowns
-- **💡 Carbon Coach** - Get personalized tips and insights based on your scanning patterns
-- **📚 Learn** - Educational content about carbon footprints and sustainability
+### 📸 Smart Scanning (4 Modes)
+- **Product Mode** — Scan electronics, household items, clothing
+- **Food Mode** — Analyze groceries, meals, and ingredients
+- **Receipt Mode** — Extract items from shopping receipts
+- **Barcode Mode** — Instant lookup via Open Food Facts database
+
+### 🚗 Transport Tracking
+- GPS-based automatic trip detection
+- Speed-based transport mode recognition (walk/bike/car/transit)
+- One-tap confirmation for detected trips
+- ✈️ Flight emissions calculator using Google's Travel Impact Model API
+
+### ⚡ Energy Monitoring
+- Log electricity, natural gas, and heating oil usage
+- Daily/weekly/monthly period tracking
+- Carbon calculations with emission factors
+
+### 📊 Insights & Gamification
+- Daily carbon budget with circular progress
+- Weekly stats with category breakdowns
+- Streak tracking and achievement badges
+- AI-generated personalized insights
+- Week-over-week comparisons
+
+### 💡 Carbon Coach
+- Gemini-powered personalized recommendations
+- Greener alternatives for scanned items
+- Eco Score ratings (0-100%)
+
+### 📤 Data Export
+- Export your data as CSV or JSON
+- Share via system share sheet
+
+---
 
 ## 🛠 Tech Stack
 
-- **Expo** (Managed Workflow) with TypeScript
-- **React Navigation** (Bottom Tabs)
-- **expo-camera** for camera functionality
-- **AsyncStorage** for local data persistence
-- **Google Gemini API** for AI-powered analysis
+### Core
+- **Expo SDK 54** (Managed Workflow) with TypeScript
+- **React Navigation 7** (Bottom Tabs + Stack)
+- **React Native 0.81**
+
+### Google APIs
+| API | Purpose |
+|-----|---------|
+| **Gemini Vision API** | Image analysis, object detection, carbon estimation |
+| **Google Maps Directions API** | Route calculation for transport |
+| **Google Maps Places API** | Location autocomplete & details |
+| **Travel Impact Model API** | Accurate flight carbon emissions |
+
+### Expo Modules
+- `expo-camera` — Camera functionality
+- `expo-barcode-scanner` — Barcode detection
+- `expo-location` — GPS tracking
+- `expo-image-picker` — Photo library access
+- `expo-file-system` — File operations
+- `expo-sharing` — Data export sharing
+- `expo-notifications` — Budget alerts & reminders
+- `@react-native-async-storage/async-storage` — Local persistence
+
+---
+
+## 📱 Screens
+
+| Screen | Description |
+|--------|-------------|
+| **Home** | Daily carbon budget dashboard, category cards, streak counter, recent activity |
+| **Scan** | Camera with 4 scan modes, text context input, quantity selector |
+| **Item Detail** | Lifecycle breakdown, Eco Score, alternatives, add to log |
+| **Journey** | Daily/weekly activity log grouped by category |
+| **Stats** | Weekly charts, category breakdown, achievements, AI insights |
+| **Transport** | GPS trip tracking, flight emissions calculator |
+| **Energy** | Electricity/gas/heating oil logging |
+| **Coach** | AI-powered personalized recommendations |
+| **History** | All past scans with detailed breakdowns |
+| **Profile** | Settings, data export, app info |
+
+---
 
 ## 📱 Getting Started
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 18+
 - npm or yarn
 - Expo Go app on your iOS/Android device
-- (Optional) Gemini API key for real AI analysis
+- Google API keys (optional — falls back to mock data)
 
 ### Installation
 
 1. **Clone the repository**
    ```bash
+   git clone <repo-url>
    cd Ecoleoai
    ```
 
@@ -46,11 +112,14 @@ An AI-powered carbon footprint AR scanner built for the **Gemini 3 Hackathon**.
 3. **Set up environment variables**
    
    Create a `.env` file in the project root:
-   ```
+   ```env
    EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key_here
+   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
    ```
    
-   Get your API key from: https://makersuite.google.com/app/apikey
+   Get your API keys:
+   - Gemini: https://makersuite.google.com/app/apikey
+   - Google Maps: https://console.cloud.google.com/apis/credentials
 
 4. **Start the development server**
    ```bash
@@ -61,63 +130,7 @@ An AI-powered carbon footprint AR scanner built for the **Gemini 3 Hackathon**.
    - Scan the QR code with Expo Go (Android) or Camera app (iOS)
    - Or press `i` for iOS simulator, `a` for Android emulator
 
-## 📂 Project Structure
-
-```
-src/
-├── components/       # Reusable UI components
-│   ├── CarbonBadge.tsx
-│   ├── ScanButton.tsx
-│   ├── ScanResultList.tsx
-│   └── HistoryItem.tsx
-│
-├── screens/          # Main app screens
-│   ├── ScanScreen.tsx
-│   ├── HistoryScreen.tsx
-│   ├── CoachScreen.tsx
-│   └── ProfileScreen.tsx
-│
-├── navigation/       # Navigation configuration
-│   └── RootNavigator.tsx
-│
-├── services/         # API and storage services
-│   ├── gemini.ts     # Gemini API integration
-│   └── storage.ts    # AsyncStorage wrappers
-│
-├── context/          # React Context providers
-│   └── HistoryContext.tsx
-│
-├── types/            # TypeScript type definitions
-│   └── carbon.ts
-│
-└── theme/            # Design system
-    ├── colors.ts
-    ├── typography.ts
-    └── index.ts
-```
-
-## 🎯 Usage
-
-### Scanning Objects
-
-1. Open the app and navigate to the **Scan** tab
-2. Point your camera at objects you want to analyze
-3. Tap the **Scan Scene** button
-4. View the detected objects with their carbon footprints
-5. Results are automatically saved to your history
-
-### Viewing History
-
-- Navigate to the **History** tab
-- See all your past scans with timestamps
-- Tap any scan to view detailed results
-- Swipe to delete individual scans
-
-### Getting Coaching
-
-- Navigate to the **Coach** tab
-- Get personalized insights based on your scanning patterns
-- Tap "Refresh Advice" for new recommendations
+---
 
 ## 🔧 Configuration
 
@@ -125,9 +138,144 @@ src/
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `EXPO_PUBLIC_GEMINI_API_KEY` | Google Gemini API key | No (falls back to mock data) |
+| `EXPO_PUBLIC_GEMINI_API_KEY` | Google Gemini API key for AI analysis | No (falls back to mock data) |
+| `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps API key for directions & places | No (falls back to estimates) |
 
-### Building for Production
+### Google Cloud APIs to Enable
+
+If using your own API keys, enable these APIs in Google Cloud Console:
+- Generative Language API (Gemini)
+- Maps SDK for iOS / Android
+- Directions API
+- Places API
+- Travel Impact Model API
+
+---
+
+## 📂 Project Structure
+
+```
+src/
+├── components/           # Reusable UI components
+│   ├── CarbonBadge.tsx
+│   ├── HistoryItem.tsx
+│   ├── QuantitySelector.tsx
+│   ├── ScanButton.tsx
+│   └── ScanResultList.tsx
+│
+├── screens/              # App screens (11 total)
+│   ├── HomeScreen.tsx
+│   ├── ScanScreen.tsx
+│   ├── ItemDetailScreen.tsx
+│   ├── JourneyScreen.tsx
+│   ├── StatsScreen.tsx
+│   ├── TransportScreen.tsx
+│   ├── EnergyScreen.tsx
+│   ├── CoachScreen.tsx
+│   ├── HistoryScreen.tsx
+│   └── ProfileScreen.tsx
+│
+├── services/             # API & business logic
+│   ├── gemini.ts         # Gemini Vision API integration
+│   ├── maps.ts           # Google Maps Directions & Places
+│   ├── travelImpact.ts   # Flight emissions calculator
+│   ├── barcode.ts        # Barcode lookup (Open Food Facts)
+│   ├── location.ts       # GPS tracking
+│   ├── notifications.ts  # Push notifications
+│   ├── storage.ts        # AsyncStorage wrappers
+│   ├── export.ts         # CSV/JSON export
+│   └── dataLayer.ts      # Data aggregation
+│
+├── context/              # React Context providers
+│   ├── CarbonContext.tsx # Daily budget state
+│   └── HistoryContext.tsx
+│
+├── data/
+│   └── carbonDatabase.ts # Local carbon factors database
+│
+├── types/                # TypeScript definitions
+│   ├── carbon.ts
+│   ├── activity.ts
+│   └── user.ts
+│
+├── hooks/
+│   └── useCamera.ts
+│
+├── navigation/
+│   └── RootNavigator.tsx
+│
+└── theme/
+    ├── colors.ts
+    ├── typography.ts
+    └── index.ts
+```
+
+---
+
+## 🎯 Usage
+
+### Scanning Items
+1. Open the app → **Scan** tab
+2. Select mode: Product / Food / Receipt / Barcode
+3. Point camera and tap **Scan**
+4. View carbon breakdown with Eco Score
+5. Adjust quantity and tap **Add to Log**
+
+### Tracking Transport
+1. Go to **Journey** → **Log Transport**
+2. Enable GPS tracking to auto-detect trips
+3. Confirm detected trips with one tap
+4. Or manually enter flights with airport codes
+
+### Monitoring Energy
+1. Go to **Journey** → **Log Energy**
+2. Select energy type (electricity/gas/heating)
+3. Enter usage amount and period
+4. View carbon impact
+
+### Viewing Stats
+- **Stats** tab shows weekly progress
+- Category breakdown by Food/Transport/Products/Energy
+- Achievement badges for milestones
+- AI-generated weekly insights
+
+---
+
+## 🌍 Carbon Data
+
+### Lifecycle Analysis
+Carbon estimates include:
+- Raw material extraction
+- Manufacturing processes
+- Transportation
+- Usage phase
+- End-of-life disposal
+
+### Severity Levels
+| Level | CO₂e Range | Meaning |
+|-------|------------|---------|
+| 🟢 Low | < 10 kg | Relatively eco-friendly |
+| 🟡 Medium | 10-100 kg | Moderate impact |
+| 🔴 High | > 100 kg | Significant footprint |
+
+### Daily Budget
+Default target: **8 kg CO₂e/day** (based on 3 tonnes/year sustainable target)
+
+---
+
+## 🤖 AI Models
+
+The app uses Gemini models with automatic fallback:
+
+1. `gemini-2.5-flash` (primary)
+2. `gemini-2.0-flash` (fallback)
+3. `gemini-1.5-flash` (stable fallback)
+
+Falls back to mock data if no API key is configured.
+
+---
+
+## 🏗 Building for Production
 
 ```bash
 # Install EAS CLI
@@ -143,33 +291,23 @@ eas build --platform ios
 eas build --platform android
 ```
 
-## 🌍 Carbon Footprint Data
-
-Carbon estimates are based on lifecycle analysis data including:
-- Raw material extraction
-- Manufacturing processes
-- Transportation
-- Usage phase
-- End-of-life disposal
-
-Severity levels:
-- 🟢 **Low** (< 10 kg CO₂e) - Relatively eco-friendly
-- 🟡 **Medium** (10-100 kg CO₂e) - Moderate impact
-- 🔴 **High** (> 100 kg CO₂e) - Significant carbon footprint
-
-## 🤝 Contributing
-
-This is a hackathon project. Feel free to fork and extend!
-
-## 📄 License
-
-MIT License - feel free to use this for your own projects.
+---
 
 ## 🏆 Hackathon
 
-Built for the **Gemini 3 Hackathon** - showcasing the power of Google's Gemini Vision API for environmental awareness.
+Built for the **Gemini 3 Hackathon** — showcasing Google's Gemini Vision API for environmental awareness and sustainable lifestyle choices.
+
+### Google APIs Demonstrated
+- ✅ Gemini Vision API for intelligent image analysis
+- ✅ Travel Impact Model API for accurate flight emissions
+- ✅ Maps APIs for transport route calculations
+
+---
+
+## 📄 License
+
+MIT License — feel free to use this for your own projects.
 
 ---
 
 Made with 💚 for a greener future
-
