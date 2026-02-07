@@ -320,8 +320,8 @@ export function TransportScreen() {
             // Update current location
             setCurrentLocation(newPoint);
             
-            // Calculate speed (convert m/s to km/h)
-            const speedKmh = (location.coords.speed || 0) * 3.6;
+            // Calculate speed (convert m/s to km/h, clamp to non-negative)
+            const speedKmh = Math.max(0, (location.coords.speed || 0) * 3.6);
             setCurrentSpeed(speedKmh);
             
             // Detect transport mode based on speed

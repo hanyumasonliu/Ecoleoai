@@ -255,8 +255,8 @@ export async function startTrip(): Promise<Trip | null> {
         currentTrip.points.push(point);
         currentTrip.distanceKm += segmentDistance;
         
-        // Update max speed
-        const speedKmh = (point.speed || 0) * 3.6; // m/s to km/h
+        // Update max speed (clamp to non-negative - GPS can report negative speeds when stationary)
+        const speedKmh = Math.max(0, (point.speed || 0) * 3.6); // m/s to km/h
         if (speedKmh > currentTrip.maxSpeedKmh) {
           currentTrip.maxSpeedKmh = speedKmh;
         }
