@@ -25,7 +25,7 @@ import { getFormattedDatabase, CARBON_DATABASE } from '../data/carbonDatabase';
 const getApiKey = (): string | undefined => {
   // For Expo, use the EXPO_PUBLIC_ prefix which is automatically available
   const key = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-  console.log('Gemini API key available:', !!key, key ? `(${key.substring(0, 10)}...)` : '(not set)');
+  console.log('Gemini API key available:', key ? 'Yes' : 'No');
   return key;
 };
 

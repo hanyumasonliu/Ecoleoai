@@ -89,17 +89,105 @@ export interface FlightEmissionsResponse {
 }
 
 /**
+ * Helper: Extract emissions from API response into our format
+ */
+function extractEmissions(
+  data: any,
+  seatClass: SeatClass
+): {
+  carbonKg: number;
+  distanceKm: number;
+  emissionsByClass: {
+    economy: number;
+    premiumEconomy: number;
+    business: number;
+    first: number;
+  };
+  source: 'travel_impact_model';
+} | null {
+  const emissions = data?.flightEmissions?.[0]?.emissionsGramsPerPax;
+  if (!emissions || (!emissions.economy && !emissions.business)) return null;
+
+  const emissionsByClass = {
+    economy: (emissions.economy || 0) / 1000,
+    premiumEconomy: (emissions.premiumEconomy || emissions.economy || 0) / 1000,
+    business: (emissions.business || 0) / 1000,
+    first: (emissions.first || emissions.business || 0) / 1000,
+  };
+
+  let carbonKg = emissionsByClass.economy;
+  if (seatClass === 'premium_economy') carbonKg = emissionsByClass.premiumEconomy;
+  else if (seatClass === 'business') carbonKg = emissionsByClass.business;
+  else if (seatClass === 'first') carbonKg = emissionsByClass.first;
+
+  return {
+    carbonKg,
+    distanceKm: data.flightEmissions[0].distanceKm || carbonKg / 0.255,
+    emissionsByClass,
+    source: 'travel_impact_model',
+  };
+}
+
+/**
+ * Helper: Try a single flight API call
+ */
+async function tryFlightEmissions(
+  url: string,
+  originCode: string,
+  destCode: string,
+  carrier: string,
+  flightNum: number,
+  departureDate: { year: number; month: number; day: number }
+): Promise<any | null> {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        flights: [{
+          origin: originCode,
+          destination: destCode,
+          operatingCarrierCode: carrier,
+          flightNumber: flightNum,
+          departureDate,
+        }],
+      }),
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data?.flightEmissions?.[0]?.emissionsGramsPerPax) {
+      return data;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Calculate flight emissions using Google's Travel Impact Model API
  * 
- * @param origin - Origin airport IATA code (e.g., "LAX", "SFO")
- * @param destination - Destination airport IATA code (e.g., "JFK", "LHR")
+ * IMPORTANT: Only works for FUTURE scheduled flights. Past flights are NOT supported.
+ * The API requires a flight number - without it, no emissions are returned.
+ * 
+ * Strategy:
+ * 1. If flight number provided → try that specific flight on upcoming dates
+ * 2. If no flight number → auto-discover by scanning common flight numbers
+ *    on major carriers for this route (stops at first hit)
+ * 
+ * @param origin - Origin airport IATA code (e.g., "LAX")
+ * @param destination - Destination airport IATA code (e.g., "JFK")
  * @param seatClass - Seat class for per-passenger calculation
- * @returns Emission data including CO2 in kg
+ * @param flightNumber - Optional flight number (e.g., 274 for AA274)
+ * @param carrierCode - Optional carrier code (e.g., "AA")
  */
 export async function calculateFlightEmissions(
   origin: string,
   destination: string,
-  seatClass: SeatClass = 'economy'
+  seatClass: SeatClass = 'economy',
+  flightNumber?: number,
+  carrierCode?: string
 ): Promise<{
   carbonKg: number;
   distanceKm: number;
@@ -109,7 +197,7 @@ export async function calculateFlightEmissions(
     business: number;
     first: number;
   };
-  comparisonToTypical?: number; // percentage difference from typical
+  comparisonToTypical?: number;
   source: 'travel_impact_model' | 'fallback';
 } | null> {
   if (!GOOGLE_API_KEY) {
@@ -117,86 +205,117 @@ export async function calculateFlightEmissions(
     return null;
   }
 
-  // Normalize airport codes to uppercase
   const originCode = origin.toUpperCase().trim();
   const destCode = destination.toUpperCase().trim();
 
-  // Validate airport codes (must be 3 letters)
   if (!/^[A-Z]{3}$/.test(originCode) || !/^[A-Z]{3}$/.test(destCode)) {
-    console.log('Invalid airport codes, using fallback');
+    console.log('❌ Invalid airport codes:', { origin: originCode, destination: destCode });
     return null;
   }
 
-  try {
-    const url = `https://travelimpactmodel.googleapis.com/v1/flights:computeFlightEmissions?key=${GOOGLE_API_KEY}`;
+  const url = `https://travelimpactmodel.googleapis.com/v1/flights:computeFlightEmissions?key=${GOOGLE_API_KEY}`;
+  
+  // Get a near-future date (3 days from now — likely to have scheduled flights)
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + 3);
+  const departureDate = {
+    year: futureDate.getFullYear(),
+    month: futureDate.getMonth() + 1,
+    day: futureDate.getDate(),
+  };
 
-    const requestBody = {
-      flights: [
-        {
+  try {
+    // === STRATEGY 1: User provided a specific flight number ===
+    if (flightNumber && carrierCode) {
+      console.log(`✈️ Looking up ${carrierCode}${flightNumber} (${originCode}→${destCode})...`);
+      
+      // Try multiple near-future dates (flight may not run every day)
+      for (let dayOffset = 1; dayOffset <= 7; dayOffset++) {
+        const date = new Date();
+        date.setDate(date.getDate() + dayOffset);
+        const depDate = {
+          year: date.getFullYear(),
+          month: date.getMonth() + 1,
+          day: date.getDate(),
+        };
+
+        const data = await tryFlightEmissions(url, originCode, destCode, carrierCode.toUpperCase(), flightNumber, depDate);
+        if (data) {
+          const result = extractEmissions(data, seatClass);
+          if (result) {
+            console.log(`✅ Got emissions for ${carrierCode}${flightNumber}: ${result.carbonKg.toFixed(1)} kg CO₂e (economy)`);
+            return result;
+          }
+        }
+      }
+      console.log(`⚠️ ${carrierCode}${flightNumber} not found in schedule, will auto-discover...`);
+    }
+
+    // === STRATEGY 2: Auto-discover a flight on this route ===
+    // Send batched requests (multiple flights per API call) for speed
+    console.log(`🔍 Auto-discovering flights for ${originCode}→${destCode}...`);
+    
+    const carriers = ['AA', 'UA', 'DL', 'B6', 'WN', 'AS', 'NK'];
+    // Low flight numbers are often major trunk routes
+    const flightNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 50, 100];
+    
+    // Try each carrier with a batch of flight numbers (one API call per carrier)
+    for (const carrier of carriers) {
+      try {
+        const batchFlights = flightNumbers.map(fn => ({
           origin: originCode,
           destination: destCode,
-        },
-      ],
-    };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Travel Impact Model API error:', response.status, errorText);
-      return null;
+          operatingCarrierCode: carrier,
+          flightNumber: fn,
+          departureDate,
+        }));
+        
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flights: batchFlights }),
+        });
+        
+        if (!response.ok) continue;
+        const data = await response.json();
+        
+        if (data.flightEmissions) {
+          for (let i = 0; i < data.flightEmissions.length; i++) {
+            const emissions = data.flightEmissions[i]?.emissionsGramsPerPax;
+            if (emissions && (emissions.economy || emissions.business)) {
+              const fn = flightNumbers[i];
+              console.log(`✅ Found ${carrier}${fn} on ${originCode}→${destCode}`);
+              
+              const emissionsByClass = {
+                economy: (emissions.economy || 0) / 1000,
+                premiumEconomy: (emissions.premiumEconomy || emissions.economy || 0) / 1000,
+                business: (emissions.business || 0) / 1000,
+                first: (emissions.first || emissions.business || 0) / 1000,
+              };
+              
+              let carbonKg = emissionsByClass.economy;
+              if (seatClass === 'premium_economy') carbonKg = emissionsByClass.premiumEconomy;
+              else if (seatClass === 'business') carbonKg = emissionsByClass.business;
+              else if (seatClass === 'first') carbonKg = emissionsByClass.first;
+              
+              console.log(`✅ ${carbonKg.toFixed(1)} kg CO₂e (${seatClass})`);
+              
+              return {
+                carbonKg,
+                distanceKm: data.flightEmissions[i].distanceKm || carbonKg / 0.255,
+                emissionsByClass,
+                source: 'travel_impact_model' as const,
+              };
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
     }
 
-    const data: FlightEmissionsResponse = await response.json();
-
-    if (!data.flightEmissions || data.flightEmissions.length === 0) {
-      console.log('No emission data returned');
-      return null;
-    }
-
-    const result = data.flightEmissions[0];
-    const emissions = result.emissionsGramsPerPax;
-
-    // Convert grams to kg
-    const emissionsByClass = {
-      economy: (emissions.economy || 0) / 1000,
-      premiumEconomy: (emissions.premiumEconomy || emissions.economy || 0) / 1000,
-      business: (emissions.business || 0) / 1000,
-      first: (emissions.first || emissions.business || 0) / 1000,
-    };
-
-    // Get the emission for the selected seat class
-    let carbonKg: number;
-    switch (seatClass) {
-      case 'premium_economy':
-        carbonKg = emissionsByClass.premiumEconomy;
-        break;
-      case 'business':
-        carbonKg = emissionsByClass.business;
-        break;
-      case 'first':
-        carbonKg = emissionsByClass.first;
-        break;
-      default:
-        carbonKg = emissionsByClass.economy;
-    }
-
-    // Estimate distance from emissions if not provided
-    // Average is about 0.255 kg CO2 per km for flights
-    const estimatedDistanceKm = result.distanceKm || carbonKg / 0.255;
-
-    return {
-      carbonKg,
-      distanceKm: estimatedDistanceKm,
-      emissionsByClass,
-      source: 'travel_impact_model',
-    };
+    console.log('⚠️ Could not find any scheduled flight for this route via API');
+    return null;
   } catch (error) {
     console.error('Error calling Travel Impact Model API:', error);
     return null;
@@ -365,7 +484,9 @@ export async function getFlightEmissions(
   origin: string,
   destination: string,
   seatClass: SeatClass = 'economy',
-  estimatedDistanceKm?: number
+  estimatedDistanceKm?: number,
+  flightNumber?: number,
+  carrierCode?: string
 ): Promise<{
   carbonKg: number;
   distanceKm: number;
@@ -378,8 +499,8 @@ export async function getFlightEmissions(
   source: 'travel_impact_model' | 'fallback';
   accuracy: 'high' | 'medium';
 }> {
-  // Try the Travel Impact Model API first
-  const apiResult = await calculateFlightEmissions(origin, destination, seatClass);
+  // Try the Travel Impact Model API first (requires flight number for emissions)
+  const apiResult = await calculateFlightEmissions(origin, destination, seatClass, flightNumber, carrierCode);
 
   if (apiResult) {
     return {

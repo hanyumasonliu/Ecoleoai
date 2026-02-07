@@ -74,7 +74,19 @@ export interface TripCalculation {
     mode: TransportMode;
     carbonKg: number;
     durationMinutes: number;
+    distanceKm: number;
+    isRealRoute: boolean; // True if from Google Maps, false if estimated
   }[];
+}
+
+/**
+ * Multi-mode route result for comparison
+ */
+export interface MultiModeRouteResult {
+  mode: TransportMode;
+  route: RouteInfo | null;
+  carbonKg: number;
+  isRealRoute: boolean;
 }
 
 /**
@@ -226,19 +238,96 @@ export async function getRoute(
 }
 
 /**
- * Calculate trip with carbon comparison for multiple modes
+ * Map our TransportMode to Google Maps travel mode
+ */
+function getGoogleTravelMode(mode: TransportMode): 'driving' | 'walking' | 'bicycling' | 'transit' | null {
+  switch (mode) {
+    case 'walk':
+      return 'walking';
+    case 'bike':
+    case 'scooter':
+      return 'bicycling';
+    case 'bus':
+    case 'train':
+    case 'subway':
+      return 'transit';
+    case 'car':
+    case 'electric_car':
+    case 'carpool':
+    case 'uber':
+    case 'taxi':
+    case 'motorcycle':
+      return 'driving';
+    case 'plane':
+      return null; // Planes don't use road routing
+    default:
+      return 'driving';
+  }
+}
+
+/**
+ * Calculate trip with real routes for multiple modes
+ * Fetches actual distances/durations from Google Maps for each applicable mode
  */
 export async function calculateTrip(
   origin: string | Coordinates,
   destination: string | Coordinates,
-  preferredMode: TransportMode = 'car'
+  preferredMode: TransportMode = 'car',
+  fetchAllModes: boolean = true
 ): Promise<TripCalculation | null> {
-  // Try to get route from Google Maps
-  let route = await getRoute(origin, destination, 'driving');
+  // Define the modes we want to compare
+  const modesToCompare: TransportMode[] = ['walk', 'bike', 'bus', 'train', 'car', 'electric_car', 'carpool', 'uber'];
   
-  // If Google Maps fails, estimate based on straight-line distance
+  // Map each transport mode to Google travel mode
+  const googleModes = new Map<'driving' | 'walking' | 'bicycling' | 'transit', TransportMode[]>();
+  
+  for (const mode of modesToCompare) {
+    const googleMode = getGoogleTravelMode(mode);
+    if (googleMode) {
+      if (!googleModes.has(googleMode)) {
+        googleModes.set(googleMode, []);
+      }
+      googleModes.get(googleMode)!.push(mode);
+    }
+  }
+
+  // Fetch routes for each unique Google travel mode (to minimize API calls)
+  const routesByGoogleMode = new Map<string, RouteInfo | null>();
+  
+  if (fetchAllModes) {
+    console.log('🗺️ Fetching routes for all transport modes...');
+    
+    // Fetch all routes in parallel
+    const fetchPromises = Array.from(googleModes.keys()).map(async (googleMode) => {
+      const route = await getRoute(origin, destination, googleMode);
+      return { googleMode, route };
+    });
+    
+    const results = await Promise.all(fetchPromises);
+    for (const { googleMode, route } of results) {
+      routesByGoogleMode.set(googleMode, route);
+      if (route) {
+        console.log(`✅ ${googleMode}: ${route.distanceText}, ${route.durationText}`);
+      }
+    }
+  } else {
+    // Just fetch the preferred mode
+    const googleMode = getGoogleTravelMode(preferredMode) || 'driving';
+    const route = await getRoute(origin, destination, googleMode);
+    routesByGoogleMode.set(googleMode, route);
+  }
+
+  // Get the route for the preferred mode
+  const preferredGoogleMode = getGoogleTravelMode(preferredMode) || 'driving';
+  let route = routesByGoogleMode.get(preferredGoogleMode) || null;
+  
+  // Fallback: try driving if preferred mode failed
+  if (!route && preferredGoogleMode !== 'driving') {
+    route = routesByGoogleMode.get('driving') || null;
+  }
+  
+  // If all routes fail, create an estimated fallback
   if (!route) {
-    // For demo/fallback: estimate distance
     const estimatedDistanceKm = 10; // Default 10km for demo
     route = {
       distanceKm: estimatedDistanceKm,
@@ -252,18 +341,39 @@ export async function calculateTrip(
 
   const carbonKg = calculateTripCarbon(route.distanceKm, preferredMode);
 
-  // Calculate alternatives
-  const alternativeModes: TransportMode[] = ['walk', 'bike', 'bus', 'train', 'car', 'electric_car'];
-  const alternatives = alternativeModes
-    .filter(m => m !== preferredMode)
-    .map(mode => ({
-      mode,
-      carbonKg: calculateTripCarbon(route!.distanceKm, mode),
-      durationMinutes: mode === preferredMode 
-        ? route!.durationMinutes 
-        : estimateDuration(route!.distanceKm, mode),
-    }))
-    .sort((a, b) => a.carbonKg - b.carbonKg);
+  // Build alternatives with real route data where available
+  const alternatives: TripCalculation['alternativeModes'] = [];
+  
+  for (const mode of modesToCompare) {
+    if (mode === preferredMode) continue;
+    
+    const googleMode = getGoogleTravelMode(mode);
+    const modeRoute = googleMode ? routesByGoogleMode.get(googleMode) : null;
+    
+    if (modeRoute) {
+      // Use real route data
+      alternatives.push({
+        mode,
+        distanceKm: modeRoute.distanceKm,
+        carbonKg: calculateTripCarbon(modeRoute.distanceKm, mode),
+        durationMinutes: modeRoute.durationMinutes,
+        isRealRoute: true,
+      });
+    } else {
+      // Estimate based on driving distance
+      const baseDistance = route.distanceKm;
+      alternatives.push({
+        mode,
+        distanceKm: baseDistance,
+        carbonKg: calculateTripCarbon(baseDistance, mode),
+        durationMinutes: estimateDuration(baseDistance, mode),
+        isRealRoute: false,
+      });
+    }
+  }
+  
+  // Sort by carbon (lowest first)
+  alternatives.sort((a, b) => a.carbonKg - b.carbonKg);
 
   return {
     route,
@@ -274,7 +384,10 @@ export async function calculateTrip(
 }
 
 /**
- * Search for places (autocomplete)
+ * Search for places using Google Places API (New)
+ * 
+ * Uses the new Places API format which replaced the legacy autocomplete API
+ * Docs: https://developers.google.com/maps/documentation/places/web-service/text-search
  * 
  * @param query - Search query
  * @param location - Optional center point for results
@@ -283,38 +396,86 @@ export async function searchPlaces(
   query: string,
   location?: Coordinates
 ): Promise<Place[]> {
-  if (!GOOGLE_MAPS_API_KEY || !query.trim()) {
+  console.log('🔍 searchPlaces called with query:', query);
+  
+  if (!GOOGLE_MAPS_API_KEY) {
+    console.log('❌ No Google Maps API key configured');
+    return [];
+  }
+  
+  if (!query.trim()) {
+    console.log('❌ Empty query');
     return [];
   }
 
   try {
-    let url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&key=${GOOGLE_MAPS_API_KEY}`;
+    // Use Places API (New) - Text Search endpoint
+    const url = 'https://places.googleapis.com/v1/places:searchText';
     
+    const requestBody: any = {
+      textQuery: query,
+      maxResultCount: 5,
+    };
+    
+    // Add location bias if provided
     if (location) {
-      url += `&location=${location.lat},${location.lng}&radius=50000`;
+      requestBody.locationBias = {
+        circle: {
+          center: {
+            latitude: location.lat,
+            longitude: location.lng,
+          },
+          radius: 50000.0, // 50km radius
+        },
+      };
     }
 
-    const response = await fetch(url);
+    console.log('🌐 Fetching Places API (New)...');
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
     const data = await response.json();
 
-    if (data.status !== 'OK') {
+    if (!response.ok) {
+      console.log('❌ Places API error:', response.status, data.error?.message || JSON.stringify(data));
+      if (response.status === 403) {
+        console.log('💡 Tip: Enable "Places API (New)" in Google Cloud Console');
+      }
       return [];
     }
 
-    return data.predictions.map((p: any) => ({
-      placeId: p.place_id,
-      name: p.structured_formatting?.main_text || p.description,
-      address: p.description,
-      coordinates: { lat: 0, lng: 0 }, // Need geocoding to get coordinates
+    if (!data.places || data.places.length === 0) {
+      console.log('💡 No places found for this query');
+      return [];
+    }
+
+    const places = data.places.map((p: any) => ({
+      placeId: p.id,
+      name: p.displayName?.text || p.formattedAddress,
+      address: p.formattedAddress,
+      coordinates: p.location ? {
+        lat: p.location.latitude,
+        lng: p.location.longitude,
+      } : { lat: 0, lng: 0 },
     }));
+    
+    console.log(`✅ Found ${places.length} places`);
+    return places;
   } catch (error) {
-    console.error('Error searching places:', error);
+    console.error('❌ Error searching places:', error);
     return [];
   }
 }
 
 /**
- * Get place details including coordinates
+ * Get place details including coordinates using Places API (New)
  */
 export async function getPlaceDetails(placeId: string): Promise<Place | null> {
   if (!GOOGLE_MAPS_API_KEY) {
@@ -322,24 +483,32 @@ export async function getPlaceDetails(placeId: string): Promise<Place | null> {
   }
 
   try {
-    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name,formatted_address,geometry&key=${GOOGLE_MAPS_API_KEY}`;
+    // Places API (New) - Get Place Details
+    const url = `https://places.googleapis.com/v1/places/${placeId}`;
 
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': 'id,displayName,formattedAddress,location',
+      },
+    });
+
     const data = await response.json();
 
-    if (data.status !== 'OK' || !data.result) {
+    if (!response.ok) {
+      console.log('❌ Place details error:', data.error?.message || JSON.stringify(data));
       return null;
     }
 
-    const result = data.result;
     return {
       placeId,
-      name: result.name,
-      address: result.formatted_address,
-      coordinates: {
-        lat: result.geometry.location.lat,
-        lng: result.geometry.location.lng,
-      },
+      name: data.displayName?.text || data.formattedAddress,
+      address: data.formattedAddress,
+      coordinates: data.location ? {
+        lat: data.location.latitude,
+        lng: data.location.longitude,
+      } : { lat: 0, lng: 0 },
     };
   } catch (error) {
     console.error('Error getting place details:', error);

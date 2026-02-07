@@ -18,7 +18,9 @@ An intelligent greenhouse gas tracker built for the **Gemini 3 Hackathon** — p
 - GPS-based automatic trip detection
 - Speed-based transport mode recognition (walk/bike/car/transit)
 - One-tap confirmation for detected trips
-- ✈️ Flight emissions calculator using Google's Travel Impact Model API
+- Manual trip entry with Places API location autocomplete
+- Multi-mode comparison (walk/bike/car/bus/train/carpool) with real Google Maps routes
+- ✈️ Flight emissions via Google Travel Impact Model API (auto-discovers flights when no flight number provided)
 
 ### ⚡ Energy Monitoring
 - Log electricity, natural gas, and heating oil usage
@@ -55,7 +57,7 @@ An intelligent greenhouse gas tracker built for the **Gemini 3 Hackathon** — p
 |-----|---------|
 | **Gemini Vision API** | Image analysis, object detection, carbon estimation |
 | **Google Maps Directions API** | Route calculation for transport |
-| **Google Maps Places API** | Location autocomplete & details |
+| **Google Maps Places API (New)** | Location search & details |
 | **Travel Impact Model API** | Accurate flight carbon emissions |
 
 ### Expo Modules
@@ -79,7 +81,7 @@ An intelligent greenhouse gas tracker built for the **Gemini 3 Hackathon** — p
 | **Item Detail** | Lifecycle breakdown, Eco Score, alternatives, add to log |
 | **Journey** | Daily/weekly activity log grouped by category |
 | **Stats** | Weekly charts, category breakdown, achievements, AI insights |
-| **Transport** | GPS trip tracking, flight emissions calculator |
+| **Transport** | GPS trip tracking, manual trip entry with Places search, multi-mode comparison, flight emissions |
 | **Energy** | Electricity/gas/heating oil logging |
 | **Coach** | AI-powered personalized recommendations |
 | **History** | All past scans with detailed breakdowns |
@@ -100,7 +102,7 @@ An intelligent greenhouse gas tracker built for the **Gemini 3 Hackathon** — p
 
 1. **Clone the repository**
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/hanyumasonliu/Ecoleoai.git
    cd Ecoleoai
    ```
 
@@ -147,7 +149,7 @@ If using your own API keys, enable these APIs in Google Cloud Console:
 - Generative Language API (Gemini)
 - Maps SDK for iOS / Android
 - Directions API
-- Places API
+- Places API (New)
 - Travel Impact Model API
 
 ---

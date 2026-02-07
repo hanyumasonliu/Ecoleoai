@@ -56,7 +56,9 @@ import {
   formatDuration as formatMapDuration,
   getModeName,
   searchPlaces,
+  getPlaceDetails,
   Place,
+  Coordinates,
 } from '../services/maps';
 import {
   getFlightEmissions,
@@ -109,6 +111,7 @@ export function TransportScreen() {
   
   // Flight-specific state (Travel Impact Model)
   const [seatClass, setSeatClass] = useState<SeatClass>('economy');
+  const [flightCode, setFlightCode] = useState(''); // e.g., "AA1234" - optional for accurate API results
   const [flightEmissions, setFlightEmissions] = useState<{
     carbonKg: number;
     distanceKm: number;
@@ -144,6 +147,10 @@ export function TransportScreen() {
   const [showDestSuggestions, setShowDestSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Selected place objects (for precise geocoding)
+  const [selectedOriginPlace, setSelectedOriginPlace] = useState<Place | null>(null);
+  const [selectedDestPlace, setSelectedDestPlace] = useState<Place | null>(null);
   
   const { addTransportActivity } = useCarbon();
 
@@ -548,6 +555,7 @@ export function TransportScreen() {
   const handleOriginSearch = (text: string) => {
     setManualOrigin(text);
     setTripCalculation(null);
+    setSelectedOriginPlace(null); // Clear selected place when user types
     
     // Clear previous timeout
     if (searchTimeoutRef.current) {
@@ -576,6 +584,7 @@ export function TransportScreen() {
   const handleDestinationSearch = (text: string) => {
     setManualDestination(text);
     setTripCalculation(null);
+    setSelectedDestPlace(null); // Clear selected place when user types
     
     // Clear previous timeout
     if (searchTimeoutRef.current) {
@@ -599,25 +608,53 @@ export function TransportScreen() {
   };
 
   /**
-   * Select origin from suggestions
+   * Select origin from suggestions - fetches place details for coordinates
    */
-  const handleSelectOrigin = (place: Place) => {
+  const handleSelectOrigin = async (place: Place) => {
     setManualOrigin(place.address);
     setOriginSuggestions([]);
     setShowOriginSuggestions(false);
+    setTripCalculation(null);
+    
+    // Fetch place details to get coordinates
+    if (place.placeId) {
+      const details = await getPlaceDetails(place.placeId);
+      if (details) {
+        setSelectedOriginPlace(details);
+        console.log('📍 Origin selected:', details.name, details.coordinates);
+      } else {
+        setSelectedOriginPlace(place);
+      }
+    } else {
+      setSelectedOriginPlace(place);
+    }
   };
 
   /**
-   * Select destination from suggestions
+   * Select destination from suggestions - fetches place details for coordinates
    */
-  const handleSelectDestination = (place: Place) => {
+  const handleSelectDestination = async (place: Place) => {
     setManualDestination(place.address);
     setDestSuggestions([]);
     setShowDestSuggestions(false);
+    setTripCalculation(null);
+    
+    // Fetch place details to get coordinates
+    if (place.placeId) {
+      const details = await getPlaceDetails(place.placeId);
+      if (details) {
+        setSelectedDestPlace(details);
+        console.log('📍 Destination selected:', details.name, details.coordinates);
+      } else {
+        setSelectedDestPlace(place);
+      }
+    } else {
+      setSelectedDestPlace(place);
+    }
   };
 
   /**
-   * Calculate manual trip
+   * Calculate manual trip - uses coordinates when available for accuracy
    */
   const handleCalculateTrip = async () => {
     if (!manualOrigin.trim() || !manualDestination.trim()) {
@@ -627,13 +664,39 @@ export function TransportScreen() {
 
     setIsCalculating(true);
     try {
-      const result = await calculateTrip(manualOrigin, manualDestination, manualMode);
+      // Use coordinates if available, otherwise fall back to address strings
+      const origin: string | Coordinates = selectedOriginPlace?.coordinates?.lat 
+        ? selectedOriginPlace.coordinates 
+        : manualOrigin;
+      const destination: string | Coordinates = selectedDestPlace?.coordinates?.lat 
+        ? selectedDestPlace.coordinates 
+        : manualDestination;
+      
+      console.log('🗺️ Calculating trip:', {
+        origin: typeof origin === 'string' ? origin : 'coordinates',
+        destination: typeof destination === 'string' ? destination : 'coordinates',
+        mode: manualMode
+      });
+      
+      // Fetch routes for all modes to show full comparison
+      const result = await calculateTrip(origin, destination, manualMode, true);
       setTripCalculation(result);
     } catch (error) {
       console.error('Error calculating trip:', error);
       Alert.alert('Calculation Error', 'Could not calculate route. Please try again.');
     } finally {
       setIsCalculating(false);
+    }
+  };
+
+  /**
+   * Switch to a different transport mode from the alternatives
+   */
+  const handleSelectAlternativeMode = (mode: TransportMode) => {
+    setManualMode(mode);
+    // Recalculate with the new mode selected
+    if (tripCalculation) {
+      handleCalculateTrip();
     }
   };
 
@@ -664,6 +727,8 @@ export function TransportScreen() {
       setManualOrigin('');
       setManualDestination('');
       setTripCalculation(null);
+      setSelectedOriginPlace(null);
+      setSelectedDestPlace(null);
       
       // Refresh data
       await loadData();
@@ -705,6 +770,8 @@ export function TransportScreen() {
       // Reset
       setShowManualEntry(false);
       setManualOrigin('');
+      setSelectedOriginPlace(null);
+      setSelectedDestPlace(null);
       setManualDestination('');
       setManualDistance('');
       setManualDuration('');
@@ -719,6 +786,7 @@ export function TransportScreen() {
 
   /**
    * Calculate flight emissions using Travel Impact Model API
+   * If a flight code (e.g., "AA1234") is provided, we can get more accurate emissions
    */
   const handleCalculateFlightEmissions = async () => {
     if (!manualOrigin.trim() || !manualDestination.trim()) {
@@ -726,12 +794,32 @@ export function TransportScreen() {
       return;
     }
 
+    // Parse flight code if provided (e.g., "AA1234" -> carrier: "AA", number: 1234)
+    let carrierCode: string | undefined;
+    let flightNumber: number | undefined;
+    
+    if (flightCode.trim()) {
+      // Handle formats: "AA1234", "AA 1234", "AA-1234", "aa1234"
+      const cleaned = flightCode.trim().toUpperCase().replace(/[\s\-]/g, '');
+      const match = cleaned.match(/^([A-Z]{2})(\d+)$/);
+      if (match) {
+        carrierCode = match[1];
+        flightNumber = parseInt(match[2], 10);
+        console.log(`✈️ Parsed flight code: ${carrierCode}${flightNumber}`);
+      } else {
+        console.log(`⚠️ Could not parse flight code: "${flightCode}" (expected format: AA1234)`);
+      }
+    }
+
     setIsCalculatingFlight(true);
     try {
       const result = await getFlightEmissions(
         manualOrigin.trim(),
         manualDestination.trim(),
-        seatClass
+        seatClass,
+        undefined, // estimatedDistanceKm
+        flightNumber,
+        carrierCode
       );
       setFlightEmissions(result);
     } catch (error) {
@@ -787,6 +875,9 @@ export function TransportScreen() {
         setTripCalculation(null);
         setFlightEmissions(null);
         setSeatClass('economy');
+        setFlightCode('');
+        setSelectedOriginPlace(null);
+        setSelectedDestPlace(null);
         
         await loadData();
       } catch (error) {
@@ -840,6 +931,9 @@ export function TransportScreen() {
       setTripCalculation(null);
       setFlightEmissions(null);
       setSeatClass('economy');
+      setFlightCode('');
+      setSelectedOriginPlace(null);
+      setSelectedDestPlace(null);
       
       await loadData();
     } catch (error) {
@@ -1157,6 +1251,8 @@ export function TransportScreen() {
                     setManualDestination('');
                     setManualDistance('');
                     setManualDuration('');
+                    setSelectedOriginPlace(null);
+                    setSelectedDestPlace(null);
                     Keyboard.dismiss();
                   }}>
                     <Ionicons name="close" size={24} color={Colors.textSecondary} />
@@ -1238,6 +1334,24 @@ export function TransportScreen() {
                       <Text style={styles.airportInputLabel}>To</Text>
                     </View>
                   </View>
+                  
+                  {/* Flight Number (optional) */}
+                  <Text style={styles.inputLabel}>Flight Number (Optional)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="e.g., AA1234, UA567, DL890"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={flightCode}
+                    onChangeText={(text) => {
+                      setFlightCode(text.toUpperCase());
+                      setFlightEmissions(null);
+                    }}
+                    autoCapitalize="characters"
+                    maxLength={10}
+                  />
+                  <Text style={styles.helperText}>
+                    Providing a flight number uses Google Travel Impact Model for precise emissions. Without it, we'll auto-discover a flight on this route.
+                  </Text>
                   
                   {/* Seat Class Selector */}
                   <Text style={styles.inputLabel}>Seat Class</Text>
@@ -1526,29 +1640,10 @@ export function TransportScreen() {
                 </>
               )}
               
-              {/* Airport input for flights */}
-              {manualMode === 'plane' && (
-                <>
-                  <Text style={styles.inputLabel}>Flight Route (Optional)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Departure airport (e.g., LAX, JFK)"
-                    placeholderTextColor={Colors.textTertiary}
-                    value={manualOrigin}
-                    onChangeText={setManualOrigin}
-                  />
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Arrival airport (e.g., SFO, LHR)"
-                    placeholderTextColor={Colors.textTertiary}
-                    value={manualDestination}
-                    onChangeText={setManualDestination}
-                  />
-                </>
-              )}
+              {/* Flight inputs are handled in the flightSection above */}
 
-              {/* Calculate Button */}
-              {manualOrigin && manualDestination && (
+              {/* Calculate Route Button - only for ground transport (flights use their own button above) */}
+              {manualMode !== 'plane' && manualOrigin && manualDestination && (
                 <TouchableOpacity
                   style={styles.calculateButton}
                   onPress={handleCalculateTrip}
@@ -1568,27 +1663,58 @@ export function TransportScreen() {
               {/* Trip Calculation Result */}
               {tripCalculation && (
                 <View style={styles.calculationResult}>
-                  <View style={styles.calculationRow}>
-                    <Text style={styles.calculationLabel}>Distance</Text>
-                    <Text style={styles.calculationValue}>{formatDistance(tripCalculation.route.distanceKm)}</Text>
-                  </View>
-                  <View style={styles.calculationRow}>
-                    <Text style={styles.calculationLabel}>Duration</Text>
-                    <Text style={styles.calculationValue}>{formatMapDuration(tripCalculation.route.durationMinutes)}</Text>
-                  </View>
-                  <View style={styles.calculationRowHighlight}>
-                    <Text style={styles.calculationLabelBold}>Carbon Footprint</Text>
-                    <Text style={styles.calculationValueBold}>{tripCalculation.carbonKg.toFixed(2)} kg CO₂e</Text>
+                  {/* Selected mode summary */}
+                  <View style={styles.selectedModeHeader}>
+                    <View style={styles.selectedModeInfo}>
+                      <Text style={styles.selectedModeLabel}>Selected: {getModeName(manualMode)}</Text>
+                      <View style={styles.routeInfo}>
+                        <Text style={styles.routeText}>
+                          {formatDistance(tripCalculation.route.distanceKm)} • {formatMapDuration(tripCalculation.route.durationMinutes)}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.carbonBadge}>
+                      <Text style={styles.carbonBadgeValue}>{tripCalculation.carbonKg.toFixed(2)}</Text>
+                      <Text style={styles.carbonBadgeUnit}>kg CO₂e</Text>
+                    </View>
                   </View>
 
-                  {/* Alternatives */}
-                  <Text style={styles.alternativesTitle}>Greener Alternatives</Text>
-                  {tripCalculation.alternativeModes.slice(0, 3).map(alt => (
-                    <View key={alt.mode} style={styles.alternativeRow}>
-                      <Text style={styles.alternativeMode}>{getModeName(alt.mode)}</Text>
-                      <Text style={styles.alternativeCarbon}>{alt.carbonKg.toFixed(2)} kg</Text>
+                  {/* All Transport Mode Comparisons */}
+                  <Text style={styles.alternativesTitle}>Compare All Transport Modes</Text>
+                  <Text style={styles.alternativesSubtitle}>Tap to select a different mode</Text>
+                  
+                  {tripCalculation.alternativeModes.map(alt => (
+                    <TouchableOpacity 
+                      key={alt.mode} 
+                      style={[
+                        styles.alternativeRow,
+                        alt.carbonKg === 0 && styles.alternativeRowGreen,
+                      ]}
+                      onPress={() => handleSelectAlternativeMode(alt.mode)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.alternativeModeInfo}>
+                        <Text style={styles.alternativeMode}>{getModeName(alt.mode)}</Text>
+                        <View style={styles.alternativeDetails}>
+                          <Text style={styles.alternativeDistance}>
+                            {formatDistance(alt.distanceKm)}
+                          </Text>
+                          {alt.isRealRoute && (
+                            <View style={styles.realRouteBadge}>
+                              <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
+                            </View>
+                          )}
+                        </View>
+                      </View>
                       <Text style={styles.alternativeDuration}>{formatMapDuration(alt.durationMinutes)}</Text>
-                    </View>
+                      <Text style={[
+                        styles.alternativeCarbon,
+                        alt.carbonKg === 0 && styles.alternativeCarbonZero
+                      ]}>
+                        {alt.carbonKg === 0 ? '0' : alt.carbonKg.toFixed(2)} kg
+                      </Text>
+                      <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                    </TouchableOpacity>
                   ))}
 
                   <TouchableOpacity
@@ -2291,6 +2417,13 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     marginBottom: Spacing.sm,
   },
+  helperText: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    marginTop: -Spacing.xs,
+    marginBottom: Spacing.md,
+    fontStyle: 'italic',
+  },
   
   // Autocomplete styles
   autocompleteContainer: {
@@ -2441,32 +2574,109 @@ const styles = StyleSheet.create({
     color: Colors.carbonLow,
     fontWeight: '700',
   },
-  alternativesTitle: {
+  // Selected mode header
+  selectedModeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: Colors.primary + '15',
+    borderRadius: BorderRadius.base,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  selectedModeInfo: {
+    flex: 1,
+  },
+  selectedModeLabel: {
+    ...TextStyles.body,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  routeInfo: {
+    marginTop: Spacing.xs,
+  },
+  routeText: {
     ...TextStyles.bodySmall,
     color: Colors.textSecondary,
+  },
+  carbonBadge: {
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  carbonBadgeValue: {
+    ...TextStyles.h3,
+    color: Colors.white,
+    fontWeight: '700',
+  },
+  carbonBadgeUnit: {
+    ...TextStyles.caption,
+    color: Colors.white,
+    opacity: 0.9,
+  },
+  alternativesTitle: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '600',
     marginTop: Spacing.md,
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.xs,
+  },
+  alternativesSubtitle: {
+    ...TextStyles.caption,
+    color: Colors.textTertiary,
+    marginBottom: Spacing.md,
   },
   alternativeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: Spacing.xs,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
-  alternativeMode: {
-    ...TextStyles.bodySmall,
-    color: Colors.textPrimary,
+  alternativeRowGreen: {
+    backgroundColor: Colors.carbonLow + '10',
+  },
+  alternativeModeInfo: {
     flex: 1,
   },
+  alternativeMode: {
+    ...TextStyles.body,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  alternativeDetails: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  alternativeDistance: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
+  },
+  realRouteBadge: {
+    marginLeft: Spacing.xs,
+  },
   alternativeCarbon: {
-    ...TextStyles.bodySmall,
+    ...TextStyles.body,
+    color: Colors.carbonMedium,
+    fontWeight: '600',
+    width: 70,
+    textAlign: 'right',
+    marginRight: Spacing.sm,
+  },
+  alternativeCarbonZero: {
     color: Colors.carbonLow,
-    marginRight: Spacing.md,
   },
   alternativeDuration: {
     ...TextStyles.caption,
     color: Colors.textTertiary,
-    width: 60,
+    width: 50,
     textAlign: 'right',
+    marginRight: Spacing.sm,
   },
   saveButton: {
     flexDirection: 'row',
