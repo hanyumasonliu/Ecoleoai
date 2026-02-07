@@ -32,11 +32,12 @@ const getApiKey = (): string | undefined => {
 /**
  * Available Gemini models to try (in order of preference)
  * Using vision-capable models for image analysis
+ * Updated for Gemini 3 Hackathon requirements
  */
 const VISION_MODELS = [
-  'gemini-2.5-flash',         // Latest available Flash (first choice)
-  'gemini-2.0-flash',         // Fast and reliable (second choice)
-  'gemini-1.5-flash',         // Stable fallback
+  'gemini-3-flash-preview',   // Gemini 3 Flash (required for hackathon)
+  'gemini-2.5-flash',         // Fallback if Gemini 3 unavailable
+  'gemini-2.0-flash',         // Secondary fallback
 ];
 
 /**
@@ -361,7 +362,7 @@ export async function generateCoachMessage(
   // If API key is available, attempt real API call
   if (apiKey) {
     try {
-      const modelName = 'gemini-2.5-flash';
+      const modelName = 'gemini-3-flash-preview'; // Gemini 3 for hackathon
       const response = await fetch(
         `${GEMINI_API_BASE}/models/${modelName}:generateContent?key=${apiKey}`,
         {

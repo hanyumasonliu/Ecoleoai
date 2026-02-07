@@ -265,11 +265,11 @@ Default target: **8 kg CO₂e/day** (based on 3 tonnes/year sustainable target)
 
 ## 🤖 AI Models
 
-The app uses Gemini models with automatic fallback:
+The app uses Gemini 3 models with automatic fallback (required for [Gemini 3 Hackathon](https://gemini3.devpost.com/)):
 
-1. `gemini-2.5-flash` (primary)
-2. `gemini-2.0-flash` (fallback)
-3. `gemini-1.5-flash` (stable fallback)
+1. `gemini-3-flash-preview` (primary - Gemini 3)
+2. `gemini-2.5-flash` (fallback)
+3. `gemini-2.0-flash` (secondary fallback)
 
 Falls back to mock data if no API key is configured.
 
