@@ -51,6 +51,24 @@ We asked ourselves: *What if we could make carbon tracking as easy as taking a p
 
 **Key Features We Built:**
 1. **Gemini Vision Pipeline** — Structured prompts that extract JSON arrays of objects with carbon estimates, lifecycle analysis, and Eco Scores
+
+```typescript
+// Gemini 3 Flash analyzes images and returns structured carbon data
+const response = await fetch(
+  `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent`,
+  {
+    method: 'POST',
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
+          { text: "Analyze this image and return carbon footprint estimates..." }
+        ]
+      }]
+    })
+  }
+);
+```
 2. **GPS Trip Tracking** — Real-time location monitoring with speed-based transport mode detection (6 speed thresholds from walking to flying)
 3. **Flight Auto-Discovery** — When users don't provide a flight number, we batch-scan 7+ carriers with 15+ common flight numbers to find real emissions data
 4. **Places API Integration** — Text search endpoint with coordinates embedded, eliminating need for separate Geocoding API calls
