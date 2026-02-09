@@ -4,7 +4,9 @@
 
 An intelligent greenhouse gas tracker built for the **Gemini 3 Hackathon** — powered by Google's Gemini Vision API.
 
-<img src="./assets/icon_lowres.png" alt="Carbon Tracer AI" style="display: block; margin: 0 auto;">
+<p align="center">
+  <img src="./assets/icon_lowres.png" width="30%"/>
+</p>
 
 
 ## 🚀 Features
